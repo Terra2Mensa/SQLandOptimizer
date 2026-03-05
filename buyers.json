@@ -1,0 +1,282 @@
+[
+  {
+    "buyer_id": "cafe_navarre",
+    "name": "Cafe Navarre",
+    "buyer_type": "fine_dining",
+    "city": "South Bend",
+    "state": "IN",
+    "region": "south_bend_in",
+    "cut_preferences": [
+      {
+        "cut_code": "112A",
+        "form": "steak_cut",
+        "markup_pct": 0.55,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "180",
+        "form": "steak_cut",
+        "markup_pct": 0.5,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "189A",
+        "form": "steak_cut",
+        "markup_pct": 0.6,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "185C",
+        "form": "steak_cut",
+        "markup_pct": 0.45,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "185A",
+        "form": "steak_cut",
+        "markup_pct": 0.4,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "193",
+        "form": "whole_subprimal",
+        "markup_pct": 0.4,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 25.0,
+        "use_fixed_premium": false
+      }
+    ],
+    "min_quality_grade": "choice",
+    "payment_terms_days": 30,
+    "active": true,
+    "contact_name": "",
+    "contact_email": "",
+    "contact_phone": ""
+  },
+  {
+    "buyer_id": "sb_steakhouse",
+    "name": "South Bend Steakhouse",
+    "buyer_type": "casual_restaurant",
+    "city": "South Bend",
+    "state": "IN",
+    "region": "south_bend_in",
+    "cut_preferences": [
+      {
+        "cut_code": "112A",
+        "form": "steak_cut",
+        "markup_pct": 0.25,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "180",
+        "form": "steak_cut",
+        "markup_pct": 0.25,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "184",
+        "form": "steak_cut",
+        "markup_pct": 0.2,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "120",
+        "form": "whole_subprimal",
+        "markup_pct": 0.25,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "116A",
+        "form": "whole_subprimal",
+        "markup_pct": 0.2,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "ground_80_20",
+        "form": "ground",
+        "markup_pct": 0.2,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 75.0,
+        "use_fixed_premium": false
+      }
+    ],
+    "min_quality_grade": "select",
+    "payment_terms_days": 30,
+    "active": true,
+    "contact_name": "",
+    "contact_email": "",
+    "contact_phone": ""
+  },
+  {
+    "buyer_id": "joes_pizza",
+    "name": "Joe's Pizza",
+    "buyer_type": "fast_casual",
+    "city": "South Bend",
+    "state": "IN",
+    "region": "south_bend_in",
+    "cut_preferences": [
+      {
+        "cut_code": "ground_80_20",
+        "form": "ground",
+        "markup_pct": 0.18,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 333.3,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "ground_73_27",
+        "form": "ground",
+        "markup_pct": 0.15,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 333.3,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "120",
+        "form": "whole_subprimal",
+        "markup_pct": 0.2,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 333.3,
+        "use_fixed_premium": false
+      }
+    ],
+    "min_quality_grade": "select",
+    "payment_terms_days": 14,
+    "active": true,
+    "contact_name": "",
+    "contact_email": "",
+    "contact_phone": ""
+  },
+  {
+    "buyer_id": "sb_schools",
+    "name": "SB School District",
+    "buyer_type": "institution",
+    "city": "South Bend",
+    "state": "IN",
+    "region": "south_bend_in",
+    "cut_preferences": [
+      {
+        "cut_code": "116A",
+        "form": "whole_subprimal",
+        "markup_pct": 0.1,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 240.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "168",
+        "form": "whole_subprimal",
+        "markup_pct": 0.1,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 240.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "167A",
+        "form": "whole_subprimal",
+        "markup_pct": 0.1,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 240.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "ground_80_20",
+        "form": "ground",
+        "markup_pct": 0.12,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 240.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "ground_73_27",
+        "form": "ground",
+        "markup_pct": 0.1,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 240.0,
+        "use_fixed_premium": false
+      }
+    ],
+    "min_quality_grade": "select",
+    "payment_terms_days": 45,
+    "active": true,
+    "contact_name": "",
+    "contact_email": "",
+    "contact_phone": ""
+  },
+  {
+    "buyer_id": "farm_box_dtc",
+    "name": "Farm Box DTC",
+    "buyer_type": "dtc",
+    "city": "South Bend",
+    "state": "IN",
+    "region": "south_bend_in",
+    "cut_preferences": [
+      {
+        "cut_code": "112A",
+        "form": "steak_cut",
+        "markup_pct": 0.9,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 20.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "180",
+        "form": "steak_cut",
+        "markup_pct": 0.8,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 20.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "189A",
+        "form": "steak_cut",
+        "markup_pct": 0.85,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 20.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "120",
+        "form": "whole_subprimal",
+        "markup_pct": 0.6,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 20.0,
+        "use_fixed_premium": false
+      },
+      {
+        "cut_code": "ground_80_20",
+        "form": "ground",
+        "markup_pct": 0.5,
+        "fixed_premium_per_lb": 0.0,
+        "volume_lbs_week": 20.0,
+        "use_fixed_premium": false
+      }
+    ],
+    "min_quality_grade": "choice",
+    "payment_terms_days": 0,
+    "active": true,
+    "contact_name": "",
+    "contact_email": "",
+    "contact_phone": ""
+  }
+]
