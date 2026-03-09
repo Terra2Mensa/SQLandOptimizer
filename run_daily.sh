@@ -10,10 +10,16 @@ LAMB_OPTIONS="--save-db"
 # RUN_CHICKEN=true
 # RUN_GOAT=true
 
-export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
-cd "$(dirname "$0")/src"
+# Auto-detect PostgreSQL location (Homebrew Apple Silicon, Homebrew Intel, Linux)
+for pg_dir in /opt/homebrew/opt/postgresql@*/bin /usr/local/opt/postgresql@*/bin /usr/lib/postgresql/*/bin; do
+    [ -d "$pg_dir" ] && export PATH="$pg_dir:$PATH" && break
+done
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-LOGDIR="$HOME/Documents/cattle-valuation/logs"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/src"
+
+LOGDIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/valuation_$(date +%Y%m%d_%H%M%S).log"
 FAIL=0
@@ -46,7 +52,8 @@ fi
 
 if [ $FAIL -ne 0 ]; then
     echo "FAILED at $(date)" >> "$LOGFILE"
-    osascript -e "display notification \"Valuation run failed — check logs\" with title \"Multi-Species Valuation\""
+    command -v osascript &>/dev/null && \
+        osascript -e "display notification \"Valuation run failed — check logs\" with title \"Multi-Species Valuation\""
 else
     echo "=== All species completed successfully: $(date) ===" >> "$LOGFILE"
 fi
