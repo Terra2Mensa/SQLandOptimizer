@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPORTS_DIR = os.path.join(PROJECT_ROOT, "reports")
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
 # MARS API (Indiana auction data)
 MARS_API_KEY = os.getenv("MARS_API_KEY", "")
 MARS_BASE_URL = "https://marsapi.ams.usda.gov/services/v1.2/reports"
@@ -166,6 +170,10 @@ GROUND_BEEF_PRODUCTS = {
 }
 
 # Buyer type templates: key cuts, markup ranges, min grade, defaults
+# Order/invoice status workflows
+ORDER_STATUSES = ["pending", "confirmed", "fulfilled", "invoiced", "paid", "cancelled"]
+INVOICE_STATUSES = ["draft", "sent", "partial", "paid", "overdue"]
+
 BUYER_TYPES = {
     "fine_dining": {
         "label": "Fine Dining",
@@ -252,4 +260,138 @@ BUYER_TYPES = {
             "ground_90_10": {"form": "ground",  "markup_pct": 0.40},
         },
     },
+}
+
+# ---------------------------------------------------------------------------
+# Pork configuration
+# ---------------------------------------------------------------------------
+
+REPORT_PORK_DAILY = 2498        # National Daily Pork FOB Plant (cut-level)
+REPORT_PORK_WEEKLY = 2500       # National Weekly Pork FOB Plant
+REPORT_PORK_COMPREHENSIVE = 2680  # National Weekly Pork Comprehensive
+REPORT_PORK_LIVE = 2510         # National Daily Direct Purchased Swine
+
+PORK_PRIMAL_ORDER = ["Loin", "Butt", "Picnic", "Rib", "Ham", "Belly", "Sparerib", "Jowl", "Trim", "Variety"]
+
+DEFAULT_PORK_LIVE_WEIGHT = 270.0    # typical market hog lbs
+DEFAULT_PORK_DRESS_PCT = 0.74
+
+PORK_PROCESSORS = {
+    "processor_a": {
+        "name": "Processor A",
+        "kill_fee": 45.00,
+        "fab_cost_per_lb": 0.12,
+        "shrink_pct": 0.020,
+        "payment_terms_days": 30,
+    },
+    "processor_b": {
+        "name": "Processor B",
+        "kill_fee": 55.00,
+        "fab_cost_per_lb": 0.14,
+        "shrink_pct": 0.025,
+        "payment_terms_days": 45,
+    },
+}
+
+# Key pork cuts for valuation (description, approx yield % of carcass, primal)
+# IMPS Series 400: (description, yield % of carcass, primal)
+# Codes verified against USDA IMPS 400 spec
+PORK_CUT_YIELDS = {
+    "410":  ("Pork Loin", 10.5, "Loin"),
+    "413":  ("Pork Loin, Boneless", 7.0, "Loin"),
+    "415":  ("Pork Tenderloin", 1.2, "Loin"),
+    "413D": ("Pork Sirloin, Boneless", 3.5, "Loin"),
+    "412B": ("Pork Loin, Center-Cut, 8 Ribs, Boneless", 5.0, "Loin"),
+    "406":  ("Pork Shoulder, Butt, Bone-In", 8.5, "Butt"),
+    "406A": ("Pork Shoulder, Butt, Boneless", 6.5, "Butt"),
+    "405":  ("Pork Shoulder, Picnic", 5.5, "Picnic"),
+    "405A": ("Pork Shoulder, Picnic, Boneless", 3.5, "Picnic"),
+    "402":  ("Pork Leg, Skinned", 16.0, "Ham"),
+    "402B": ("Pork Leg, Boneless", 10.5, "Ham"),
+    "409":  ("Pork Belly, Skinless", 12.0, "Belly"),
+    "416":  ("Pork Spareribs", 3.5, "Sparerib"),
+    "416A": ("Pork Spareribs, St. Louis Style", 2.5, "Sparerib"),
+    "419":  ("Pork Jowl", 2.0, "Jowl"),
+}
+
+# ---------------------------------------------------------------------------
+# Lamb configuration
+# ---------------------------------------------------------------------------
+
+REPORT_LAMB_CUTOUT = 2649       # National Estimated Lamb Carcass Cutout
+REPORT_LAMB_BOXED = 2648        # National 5-Day Rolling Average Boxed Lamb
+REPORT_LAMB_COMPREHENSIVE = 2651  # National Weekly Comprehensive Lamb Carcass
+
+LAMB_PRIMAL_ORDER = ["Rack", "Shoulder", "Loin", "Leg", "Breast/Shank", "Other"]
+
+DEFAULT_LAMB_LIVE_WEIGHT = 135.0
+DEFAULT_LAMB_DRESS_PCT = 0.50
+
+# IMPS Series 200: (description, yield % of carcass, primal)
+# These are fallback values; report 2649 provides percentage_carcass live
+LAMB_SUBPRIMAL_YIELDS = {
+    "204":  ("Rack, 8-Rib", 5.65, "Rack"),
+    "204C": ("Rack, Roast-Ready, Frenched", 3.07, "Rack"),
+    "207":  ("Shoulders, Square-Cut", 23.10, "Shoulder"),
+    "209":  ("Breast", 8.45, "Breast/Shank"),
+    "210":  ("Foreshank", 3.25, "Breast/Shank"),
+    "232":  ("Loin, Trimmed", 5.56, "Loin"),
+    "232E": ("Flank, Untrimmed", 3.22, "Loin"),
+    "233A": ("Leg, Trotter Off", 15.81, "Leg"),
+    "234":  ("Leg, Boneless, Tied", 10.24, "Leg"),
+    "296":  ("Ground Lamb", 3.91, "Other"),
+}
+
+LAMB_PROCESSORS = {
+    "processor_a": {
+        "name": "Processor A",
+        "kill_fee": 35.00,
+        "fab_cost_per_lb": 0.15,
+        "shrink_pct": 0.020,
+        "payment_terms_days": 30,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Chicken configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_CHICKEN_LIVE_WEIGHT = 6.5   # typical broiler lbs
+DEFAULT_CHICKEN_DRESS_PCT = 0.72
+
+# No USDA API available — manual entry only
+# Codes TBD — NAMP Poultry Buyers Guide needed for official P-series codes
+# (description, yield % of live weight after dressing, category)
+CHICKEN_CUT_YIELDS = {
+    "breast_bnls":  ("Boneless Skinless Breast", 24.0, "White Meat"),
+    "breast_bone":  ("Bone-In Breast", 28.0, "White Meat"),
+    "tender":       ("Tenderloins", 4.0, "White Meat"),
+    "thigh_bnls":   ("Boneless Thigh", 10.0, "Dark Meat"),
+    "thigh_bone":   ("Bone-In Thigh", 12.0, "Dark Meat"),
+    "drumstick":    ("Drumstick", 10.0, "Dark Meat"),
+    "wing_whole":   ("Whole Wing", 8.0, "Wing"),
+    "wing_flat":    ("Wing Flat", 3.5, "Wing"),
+    "wing_drum":    ("Wing Drumette", 3.0, "Wing"),
+    "back_neck":    ("Back & Neck", 15.0, "Other"),
+    "giblets":      ("Giblets", 5.0, "Other"),
+}
+
+# ---------------------------------------------------------------------------
+# Goat configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_GOAT_LIVE_WEIGHT = 80.0
+DEFAULT_GOAT_DRESS_PCT = 0.45
+
+# No USDA API available — manual entry only
+# Codes TBD — official IMPS Series 11 uses 11-X-## format, needs mapping
+# (description, yield % of carcass weight, primal)
+GOAT_CUT_YIELDS = {
+    "leg":          ("Leg", 28.0, "Leg"),
+    "loin":         ("Loin/Rack", 12.0, "Loin"),
+    "shoulder":     ("Shoulder", 24.0, "Shoulder"),
+    "shank":        ("Shank/Foreshank", 8.0, "Shank"),
+    "breast_rib":   ("Breast & Ribs", 14.0, "Breast"),
+    "neck":         ("Neck", 6.0, "Other"),
+    "ground":       ("Ground Goat", 8.0, "Other"),
 }

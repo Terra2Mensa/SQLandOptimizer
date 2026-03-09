@@ -1,0 +1,48 @@
+{
+  "date": "2026-03-08",
+  "source": "manual",
+  "cuts": {
+    "leg": {
+      "description": "Leg",
+      "price_per_lb": 8.5,
+      "yield_pct": 28.0,
+      "category": "Leg"
+    },
+    "loin": {
+      "description": "Loin/Rack",
+      "price_per_lb": 12.0,
+      "yield_pct": 12.0,
+      "category": "Loin"
+    },
+    "shoulder": {
+      "description": "Shoulder",
+      "price_per_lb": 6.5,
+      "yield_pct": 24.0,
+      "category": "Shoulder"
+    },
+    "shank": {
+      "description": "Shank/Foreshank",
+      "price_per_lb": 5.0,
+      "yield_pct": 8.0,
+      "category": "Shank"
+    },
+    "breast_rib": {
+      "description": "Breast & Ribs",
+      "price_per_lb": 4.5,
+      "yield_pct": 14.0,
+      "category": "Breast"
+    },
+    "neck": {
+      "description": "Neck",
+      "price_per_lb": 3.5,
+      "yield_pct": 6.0,
+      "category": "Other"
+    },
+    "ground": {
+      "description": "Ground Goat",
+      "price_per_lb": 7.0,
+      "yield_pct": 8.0,
+      "category": "Other"
+    }
+  }
+}

@@ -23,6 +23,7 @@ Usage:
 import argparse
 import base64
 import json
+import os
 import re
 import urllib.request
 from datetime import datetime
@@ -34,10 +35,13 @@ from config import (
     REPORT_IAMN_DAILY, REPORT_PREMIUMS, REPORT_IN_AUCTION,
     DRESS_PCT_BY_YG, SUBPRIMAL_YIELDS, PRIMAL_ORDER,
     DEFAULT_LIVE_WEIGHT, DEFAULT_YIELD_GRADE, DEFAULT_QUALITY_GRADE,
-    DEFAULT_BROKER_FEE_PCT, DEFAULT_BYPRODUCT_PCT,
-    DEFAULT_BYPRODUCT_VALUE_PER_LB, DEFAULT_GRASSFED_PREMIUM_CWT,
-    PROCESSORS, DEFAULT_PROCESSOR,
+    DEFAULT_PROCESSOR, REPORTS_DIR,
 )
+from config_loader import (
+    load_processors, load_broker_fee_pct, load_byproduct_pct,
+    load_byproduct_value_per_lb, load_grassfed_premium_cwt,
+)
+from shared import fetch_datamart, fetch_mars, parse_number
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +73,12 @@ class CarcassValuation:
     hot_carcass_weight: float
     report_date: str
     cut_values: list = field(default_factory=list)
-    total_subprimal_value: float = 0.0
+    total_cut_value: float = 0.0
     byproduct_value: float = 0.0
-    total_carcass_value: float = 0.0
-    value_per_cwt_carcass: float = 0.0
-    value_per_cwt_live: float = 0.0
-    broker_fee: float = 0.0
+    gross_value: float = 0.0
+    value_per_lb_carcass: float = 0.0
+    value_per_lb_live: float = 0.0
+    processing_cost: float = 0.0
     net_value: float = 0.0
 
 
@@ -108,12 +112,6 @@ class PurchasePriceResult:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-def parse_number(s) -> float:
-    if s is None or str(s) in ('', 'None', '.00'):
-        return 0.0
-    return float(str(s).replace(',', ''))
-
-
 def parse_imps_code(description: str) -> str:
     match = re.search(r'\((\d+[A-Z]?)\s', description)
     return match.group(1) if match else ""
@@ -122,27 +120,6 @@ def parse_imps_code(description: str) -> str:
 # ---------------------------------------------------------------------------
 # DataMart API helpers
 # ---------------------------------------------------------------------------
-
-def fetch_datamart(report_id: int, last_reports: int = 1, all_sections: bool = True) -> list:
-    params = f"lastReports={last_reports}"
-    if all_sections:
-        params += "&allSections=True"
-    url = f"{DATAMART_BASE_URL}/{report_id}?{params}"
-    req = urllib.request.Request(url)
-    req.add_header('Accept', 'application/json')
-    resp = urllib.request.urlopen(req, timeout=60)
-    return json.loads(resp.read().decode())
-
-
-def fetch_mars(report_id: int, api_key: str, last_reports: int = 1) -> dict:
-    url = f"{MARS_BASE_URL}/{report_id}?lastReports={last_reports}"
-    req = urllib.request.Request(url)
-    req.add_header('Accept', 'application/json')
-    encoded = base64.b64encode(f":{api_key}".encode()).decode()
-    req.add_header('Authorization', f'Basic {encoded}')
-    resp = urllib.request.urlopen(req, timeout=60)
-    return json.loads(resp.read().decode())
-
 
 def parse_cuts_from_section(items: list, grade: str) -> list:
     cuts = []
@@ -510,18 +487,26 @@ def compute_carcass_value(
     live_weight: float = DEFAULT_LIVE_WEIGHT,
     yield_grade: int = DEFAULT_YIELD_GRADE,
     quality_grade: str = DEFAULT_QUALITY_GRADE,
-    broker_fee_pct: float = DEFAULT_BROKER_FEE_PCT,
-    byproduct_pct: float = DEFAULT_BYPRODUCT_PCT,
-    byproduct_value_per_lb: float = DEFAULT_BYPRODUCT_VALUE_PER_LB,
-    grassfed_premium_cwt: float = DEFAULT_GRASSFED_PREMIUM_CWT,
+    broker_fee_pct: float = None,
+    byproduct_pct: float = None,
+    byproduct_value_per_lb: float = None,
+    grassfed_premium_cwt: float = None,
 ) -> CarcassValuation:
+    if broker_fee_pct is None:
+        broker_fee_pct = load_broker_fee_pct()
+    if byproduct_pct is None:
+        byproduct_pct = load_byproduct_pct()
+    if byproduct_value_per_lb is None:
+        byproduct_value_per_lb = load_byproduct_value_per_lb()
+    if grassfed_premium_cwt is None:
+        grassfed_premium_cwt = load_grassfed_premium_cwt()
     cuts_by_code = build_grade_cuts(usda_data, quality_grade, grassfed_premium_cwt)
 
     dress_pct = DRESS_PCT_BY_YG.get(yield_grade, 0.60)
     hot_carcass_wt = live_weight * dress_pct
 
     cut_values = []
-    total_subprimal_value = 0.0
+    total_cut_value = 0.0
 
     for imps_code, (desc, yield_pct, primal) in SUBPRIMAL_YIELDS.items():
         cut_data = cuts_by_code.get(imps_code)
@@ -531,7 +516,7 @@ def compute_carcass_value(
         cut_weight = hot_carcass_wt * (yield_pct / 100.0)
         price_per_lb = cut_data.price_per_lb
         cut_value = cut_weight * price_per_lb
-        total_subprimal_value += cut_value
+        total_cut_value += cut_value
 
         cut_values.append({
             'imps_code': imps_code,
@@ -547,11 +532,11 @@ def compute_carcass_value(
         })
 
     byproduct_value = live_weight * byproduct_pct * byproduct_value_per_lb
-    total_carcass_value = total_subprimal_value + byproduct_value
-    broker_fee = total_carcass_value * broker_fee_pct
-    net_value = total_carcass_value - broker_fee
-    value_per_cwt_carcass = (total_subprimal_value / hot_carcass_wt) * 100 if hot_carcass_wt > 0 else 0
-    value_per_cwt_live = (net_value / live_weight) * 100 if live_weight > 0 else 0
+    gross_value = total_cut_value + byproduct_value
+    processing_cost = gross_value * broker_fee_pct
+    net_value = gross_value - processing_cost
+    value_per_lb_carcass = (total_cut_value / hot_carcass_wt) if hot_carcass_wt > 0 else 0
+    value_per_lb_live = (net_value / live_weight) if live_weight > 0 else 0
 
     return CarcassValuation(
         live_weight=live_weight,
@@ -561,12 +546,12 @@ def compute_carcass_value(
         hot_carcass_weight=hot_carcass_wt,
         report_date=usda_data['report_date'],
         cut_values=sorted(cut_values, key=lambda x: -x['cut_value']),
-        total_subprimal_value=round(total_subprimal_value, 2),
+        total_cut_value=round(total_cut_value, 2),
         byproduct_value=round(byproduct_value, 2),
-        total_carcass_value=round(total_carcass_value, 2),
-        value_per_cwt_carcass=round(value_per_cwt_carcass, 2),
-        value_per_cwt_live=round(value_per_cwt_live, 2),
-        broker_fee=round(broker_fee, 2),
+        gross_value=round(gross_value, 2),
+        value_per_lb_carcass=round(value_per_lb_carcass, 4),
+        value_per_lb_live=round(value_per_lb_live, 4),
+        processing_cost=round(processing_cost, 2),
         net_value=round(net_value, 2),
     )
 
@@ -670,7 +655,7 @@ def compute_purchase_prices(
     shrink_pct = processor.get('shrink_pct', 0)
 
     fab_total = fab_cost_per_lb * hcw
-    shrink_cost = shrink_pct * valuation.total_subprimal_value
+    shrink_cost = shrink_pct * valuation.total_cut_value
     remainder = valuation.net_value - kill_fee - fab_total - shrink_cost
     cutout_minus = (remainder / live_weight) * 100 if live_weight > 0 else 0.0
 
@@ -749,14 +734,13 @@ def print_valuation(val: CarcassValuation, usda_data: dict):
     total_cut_wt = sum(c['cut_weight_lbs'] for c in val.cut_values)
     total_yield = (total_cut_wt / val.hot_carcass_weight * 100) if val.hot_carcass_weight > 0 else 0
     print(f"  Total subprimal weight:  {total_cut_wt:,.1f} lbs ({total_yield:.1f}% of carcass)")
-    print(f"  Total subprimal value:   ${val.total_subprimal_value:>12,.2f}")
+    print(f"  Total cut value:         ${val.total_cut_value:>12,.2f}")
     print(f"  Byproduct value:         ${val.byproduct_value:>12,.2f}")
-    print(f"  GROSS CARCASS VALUE:     ${val.total_carcass_value:>12,.2f}")
-    print(f"  Broker fee (2%):        -${val.broker_fee:>12,.2f}")
-    print(f"  NET CARCASS VALUE:       ${val.net_value:>12,.2f}")
-    print(f"\n  Value per cwt (carcass): ${val.value_per_cwt_carcass:>8,.2f}/cwt")
-    print(f"  Value per cwt (live):    ${val.value_per_cwt_live:>8,.2f}/cwt")
-    print(f"  Value per lb (live):     ${val.value_per_cwt_live / 100:>8,.4f}/lb")
+    print(f"  GROSS VALUE:             ${val.gross_value:>12,.2f}")
+    print(f"  Processing cost (2%):   -${val.processing_cost:>12,.2f}")
+    print(f"  NET VALUE:               ${val.net_value:>12,.2f}")
+    print(f"\n  Value per lb (carcass):  ${val.value_per_lb_carcass:>8,.4f}/lb  (${val.value_per_lb_carcass * 100:>8,.2f}/cwt)")
+    print(f"  Value per lb (live):     ${val.value_per_lb_live:>8,.4f}/lb  (${val.value_per_lb_live * 100:>8,.2f}/cwt)")
     print("=" * 80)
 
 
@@ -764,17 +748,17 @@ def print_all_grades_summary(valuations: dict):
     print("\n" + "=" * 100)
     print("  ALL-GRADES COMPARISON")
     print("=" * 100)
-    print(f"\n  {'Grade':<12} {'Subprimal $':>14} {'Byprod $':>10} {'Gross $':>12} {'Broker 2%':>10} "
-          f"{'NET VALUE':>12} {'$/cwt Live':>12} {'$/cwt Carc':>12}")
-    print("  " + "─" * 94)
+    print(f"\n  {'Grade':<12} {'Cut Value $':>14} {'Byprod $':>10} {'Gross $':>12} {'Proc Cost':>10} "
+          f"{'NET VALUE':>12} {'$/lb Live':>10} {'$/lb Carc':>10}")
+    print("  " + "─" * 90)
     for grade in ['Prime', 'Choice', 'Select', 'Grassfed']:
         v = valuations.get(grade)
         if not v:
             continue
-        print(f"  {grade:<12} ${v.total_subprimal_value:>12,.2f} ${v.byproduct_value:>8,.2f} "
-              f"${v.total_carcass_value:>10,.2f} ${v.broker_fee:>8,.2f} "
-              f"${v.net_value:>10,.2f} ${v.value_per_cwt_live:>10,.2f} "
-              f"${v.value_per_cwt_carcass:>10,.2f}")
+        print(f"  {grade:<12} ${v.total_cut_value:>12,.2f} ${v.byproduct_value:>8,.2f} "
+              f"${v.gross_value:>10,.2f} ${v.processing_cost:>8,.2f} "
+              f"${v.net_value:>10,.2f} ${v.value_per_lb_live:>8,.4f} "
+              f"${v.value_per_lb_carcass:>8,.4f}")
     print("=" * 100)
 
 
@@ -1037,13 +1021,13 @@ def write_excel(valuations: dict, usda_data: dict, slaughter_data: dict,
         cell.alignment = Alignment(horizontal='center')
 
     metrics = [
-        ('Total Subprimal Value', 'total_subprimal_value'),
+        ('Total Cut Value', 'total_cut_value'),
         ('Byproduct Value', 'byproduct_value'),
-        ('GROSS CARCASS VALUE', 'total_carcass_value'),
-        ('Broker Fee (2%)', 'broker_fee'),
-        ('NET CARCASS VALUE', 'net_value'),
-        ('$/cwt (carcass)', 'value_per_cwt_carcass'),
-        ('$/cwt (live)', 'value_per_cwt_live'),
+        ('GROSS VALUE', 'gross_value'),
+        ('Processing Cost (2%)', 'processing_cost'),
+        ('NET VALUE', 'net_value'),
+        ('$/lb (carcass)', 'value_per_lb_carcass'),
+        ('$/lb (live)', 'value_per_lb_live'),
     ]
     for label, attr in metrics:
         row += 1
@@ -1053,7 +1037,7 @@ def write_excel(valuations: dict, usda_data: dict, slaughter_data: dict,
             ws.cell(row=row, column=1).font = Font(bold=True)
         for c, grade in enumerate([g for g in grade_order if g in valuations], 2):
             v = getattr(valuations[grade], attr)
-            if attr == 'broker_fee':
+            if attr == 'processing_cost':
                 v = -v
             cell = ws.cell(row=row, column=c, value=v)
             cell.number_format = '$#,##0.00'
@@ -1405,10 +1389,10 @@ def main():
                         help=f'Quality grade (default: {DEFAULT_QUALITY_GRADE})')
     parser.add_argument('--all-grades', action='store_true',
                         help='Compute all 4 grades side by side')
-    parser.add_argument('--grassfed-premium', type=float, default=DEFAULT_GRASSFED_PREMIUM_CWT,
-                        help=f'Grassfed premium $/cwt over Choice (default: {DEFAULT_GRASSFED_PREMIUM_CWT})')
-    parser.add_argument('--broker-fee', type=float, default=DEFAULT_BROKER_FEE_PCT,
-                        help=f'Broker fee as decimal (default: {DEFAULT_BROKER_FEE_PCT})')
+    parser.add_argument('--grassfed-premium', type=float, default=None,
+                        help=f'Grassfed premium $/cwt over Choice (default: from config)')
+    parser.add_argument('--broker-fee', type=float, default=None,
+                        help=f'Broker fee as decimal (default: from config)')
     parser.add_argument('--output', type=str, default=None,
                         help='Output Excel file path')
     parser.add_argument('--no-excel', action='store_true',
@@ -1418,7 +1402,7 @@ def main():
     parser.add_argument('--save-db', action='store_true',
                         help='Save data to PostgreSQL')
     parser.add_argument('--processor', type=str, default=None,
-                        help=f'Processor profile name (available: {", ".join(PROCESSORS.keys())})')
+                        help='Processor profile name')
     parser.add_argument('--kill-fee', type=float, default=None,
                         help='Override kill fee $/head')
     parser.add_argument('--fab-cost', type=float, default=None,
@@ -1453,11 +1437,12 @@ def main():
         valuations[val.quality_grade] = val
 
     # ── Resolve processor and compute purchase prices ──
+    processors = load_processors()
     processor_key = args.processor or DEFAULT_PROCESSOR
-    if processor_key not in PROCESSORS:
-        print(f"\nUnknown processor '{processor_key}'. Available: {list(PROCESSORS.keys())}")
+    if processor_key not in processors:
+        print(f"\nUnknown processor '{processor_key}'. Available: {list(processors.keys())}")
         return
-    processor = dict(PROCESSORS[processor_key])
+    processor = dict(processors[processor_key])
     if args.kill_fee is not None:
         processor['kill_fee'] = args.kill_fee
     if args.fab_cost is not None:
@@ -1478,10 +1463,13 @@ def main():
             quality_grade=grade.lower(),
         )
 
+    # ── Resolve defaults for display/export ──
+    grassfed_prem = args.grassfed_premium if args.grassfed_premium is not None else load_grassfed_premium_cwt()
+
     # ── Console output ──
     if args.all_grades:
         # Print cut matrix
-        print_cut_matrix(usda_data, args.grassfed_premium)
+        print_cut_matrix(usda_data, grassfed_prem)
         # Print each grade's detail
         for grade in ['Prime', 'Choice', 'Select', 'Grassfed']:
             if grade in valuations:
@@ -1507,9 +1495,9 @@ def main():
 
     # ── Excel output ──
     if not args.no_excel:
-        filepath = args.output or f'valuation_{datetime.now().strftime("%Y%m%d")}.xlsx'
+        filepath = args.output or os.path.join(REPORTS_DIR, f'valuation_{datetime.now().strftime("%Y%m%d")}.xlsx')
         write_excel(valuations, usda_data, slaughter_data, premiums_data,
-                    auction_data, args.grassfed_premium, filepath, purchase_results)
+                    auction_data, grassfed_prem, filepath, purchase_results)
 
     # ── Database persistence ──
     if args.save_db:
@@ -1536,7 +1524,21 @@ def main():
                 db.save_indiana_auction(auction_data['report_date'], all_auction)
             # Save valuations
             for val in valuations.values():
-                db.save_valuation(val)
+                db.save_valuation('cattle', rd, {
+                    'live_weight': val.live_weight,
+                    'yield_grade': val.yield_grade,
+                    'quality_grade': val.quality_grade,
+                    'dressing_pct': val.dressing_pct,
+                    'hot_carcass_weight': val.hot_carcass_weight,
+                    'total_cut_value': val.total_cut_value,
+                    'byproduct_value': val.byproduct_value,
+                    'gross_value': val.gross_value,
+                    'processing_cost': val.processing_cost,
+                    'net_value': val.net_value,
+                    'value_per_lb_carcass': val.value_per_lb_carcass,
+                    'value_per_lb_live': val.value_per_lb_live,
+                    'cut_detail': val.cut_values,
+                })
             # Save purchase prices
             for pp in purchase_results.values():
                 db.save_purchase_prices(rd, pp, args.yield_grade)

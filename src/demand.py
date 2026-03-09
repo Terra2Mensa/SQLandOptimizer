@@ -1,11 +1,14 @@
 """Demand aggregation, carcass allocation, margin calculation, and output."""
+import os
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from config import (
     SUBPRIMAL_YIELDS, GROUND_BEEF_PRODUCTS, PRIMAL_ORDER,
-    REGIONS, GRADE_RANK, TRIM_YIELD_PCT, PROCESSORS,
-    DEFAULT_REGION, DEFAULT_PROCESSOR,
+    GRADE_RANK, DEFAULT_REGION, DEFAULT_PROCESSOR, REPORTS_DIR,
+)
+from config_loader import (
+    load_processors, load_regions, load_trim_yield_pct, load_broker_fee_pct,
 )
 from buyers import (
     BuyerProfile, compute_buyer_price, _get_base_price_cwt,
@@ -55,6 +58,53 @@ class AllocationResult:
     processing_cost: float = 0.0
     gross_margin: float = 0.0
     margin_pct: float = 0.0
+    byproduct_revenue: float = 0.0
+    kill_fee: float = 0.0
+    fabrication_cost: float = 0.0
+    shrink_cost: float = 0.0
+    broker_fee: float = 0.0
+
+
+@dataclass
+class IncomeStatement:
+    quality_grade: str
+    yield_grade: int
+    hcw: float
+    live_weight: float
+    report_date: str
+    region: str
+
+    # Revenue
+    allocated_revenue: float = 0.0
+    unallocated_revenue: float = 0.0
+    byproduct_revenue: float = 0.0
+    total_revenue: float = 0.0
+
+    # Revenue detail
+    revenue_by_primal: Dict[str, float] = field(default_factory=dict)
+    revenue_by_channel: Dict[str, float] = field(default_factory=dict)
+
+    # COGS
+    animal_cost: float = 0.0
+    kill_fee: float = 0.0
+    fabrication_cost: float = 0.0
+    shrink_cost: float = 0.0
+    total_cogs: float = 0.0
+
+    # Gross profit
+    gross_profit: float = 0.0
+    gross_margin_pct: float = 0.0
+
+    # Operating expenses
+    broker_fee: float = 0.0
+    total_opex: float = 0.0
+
+    # Net margin
+    net_margin: float = 0.0
+    net_margin_pct: float = 0.0
+
+    # For DB persistence
+    allocation_detail: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +128,10 @@ def aggregate_demand(
     region: str = DEFAULT_REGION,
     quality_grade: str = "choice",
 ) -> List[DemandLine]:
-    regional_adj = REGIONS.get(region, REGIONS[DEFAULT_REGION])["pricing_adjustment"]
+    regions = load_regions()
+    regional_adj = regions.get(region, regions[DEFAULT_REGION])["pricing_adjustment"]
     grade_rank = GRADE_RANK.get(quality_grade.lower(), 2)
+    trim_yield_pct = load_trim_yield_pct()
 
     # Collect demand per cut across all active, grade-eligible buyers
     cut_demand = {}  # code -> list of {buyer_id, name, volume, price}
@@ -117,7 +169,7 @@ def aggregate_demand(
             yield_pct = SUBPRIMAL_YIELDS[code][1] / 100.0
             carcass_yield = hcw * yield_pct
         elif code in GROUND_BEEF_PRODUCTS:
-            carcass_yield = hcw * TRIM_YIELD_PCT
+            carcass_yield = hcw * trim_yield_pct
         else:
             carcass_yield = 0.0
 
@@ -174,8 +226,10 @@ def allocate_carcass(
     processor_key: str = DEFAULT_PROCESSOR,
     region: str = DEFAULT_REGION,
 ) -> AllocationResult:
-    processor = PROCESSORS[processor_key]
-    regional_adj = REGIONS.get(region, REGIONS[DEFAULT_REGION])["pricing_adjustment"]
+    processors = load_processors()
+    processor = processors[processor_key]
+    regions = load_regions()
+    regional_adj = regions.get(region, regions[DEFAULT_REGION])["pricing_adjustment"]
     hcw = valuation.hot_carcass_weight
     live_weight = valuation.live_weight
     quality_grade = valuation.quality_grade.lower()
@@ -196,7 +250,7 @@ def allocate_carcass(
         }
 
     # Ground beef: split trim proportionally among ground products with demand
-    ground_total_weight = hcw * TRIM_YIELD_PCT
+    ground_total_weight = hcw * load_trim_yield_pct()
     ground_codes_with_demand = []
     for gcode in GROUND_BEEF_PRODUCTS:
         if _get_base_price_cwt(gcode, usda_prices, ground_beef_prices) > 0:
@@ -274,12 +328,14 @@ def allocate_carcass(
 
     # Margin calculation
     farmer_cost = purchase_price_cwt * live_weight / 100.0
-    kill_fee = processor["kill_fee"]
+    kill_fee_val = processor["kill_fee"]
     fab_total = processor["fab_cost_per_lb"] * hcw
-    shrink_cost = processor["shrink_pct"] * valuation.total_subprimal_value
-    processing_cost = kill_fee + fab_total + shrink_cost
-    gross_margin = total_revenue + unallocated_value - farmer_cost - processing_cost
-    margin_pct = (gross_margin / (total_revenue + unallocated_value) * 100) if (total_revenue + unallocated_value) > 0 else 0
+    shrink_cost_val = processor["shrink_pct"] * valuation.total_cut_value
+    processing_cost = kill_fee_val + fab_total + shrink_cost_val
+    byproduct_rev = valuation.byproduct_value
+    broker_fee_val = valuation.processing_cost
+    gross_margin = total_revenue + unallocated_value + byproduct_rev - farmer_cost - processing_cost
+    margin_pct = (gross_margin / (total_revenue + unallocated_value + byproduct_rev) * 100) if (total_revenue + unallocated_value + byproduct_rev) > 0 else 0
 
     return AllocationResult(
         quality_grade=valuation.quality_grade,
@@ -293,6 +349,11 @@ def allocate_carcass(
         processing_cost=round(processing_cost, 2),
         gross_margin=round(gross_margin, 2),
         margin_pct=round(margin_pct, 1),
+        byproduct_revenue=round(byproduct_rev, 2),
+        kill_fee=round(kill_fee_val, 2),
+        fabrication_cost=round(fab_total, 2),
+        shrink_cost=round(shrink_cost_val, 2),
+        broker_fee=round(broker_fee_val, 2),
     )
 
 
@@ -301,7 +362,8 @@ def allocate_carcass(
 # ---------------------------------------------------------------------------
 
 def print_demand_report(demand_lines: List[DemandLine], animals_needed: dict, quality_grade: str, region: str):
-    region_label = REGIONS.get(region, REGIONS[DEFAULT_REGION])["label"]
+    regions = load_regions()
+    region_label = regions.get(region, regions[DEFAULT_REGION])["label"]
     print(f"\nDEMAND ANALYSIS — {quality_grade.title()} | Region: {region_label}")
     print("=" * 90)
     print(f"{'IMPS':<14} {'Cut':<26} {'Primal':<8} {'Demand/wk':>10} {'Buyers':>7} {'Avg$/lb':>8} {'Yield':>7} {'Ratio':>7}")
@@ -355,14 +417,240 @@ def print_allocation_report(result: AllocationResult):
 
 
 def print_buyer_list(buyers: List[BuyerProfile]):
+    regions = load_regions()
     print(f"\nBUYER DIRECTORY — {len(buyers)} profiles")
     print("=" * 95)
     print(f"{'ID':<16} {'Name':<24} {'Type':<18} {'Region':<16} {'Grade':<8} {'Active':<7} {'Cuts':>5}")
     print("-" * 95)
     for b in buyers:
-        region_label = REGIONS.get(b.region, {}).get("label", b.region)
+        region_label = regions.get(b.region, {}).get("label", b.region)
         print(f"{b.buyer_id:<16} {b.name:<24} {b.buyer_type:<18} {region_label:<16} "
               f"{b.min_quality_grade:<8} {'Yes' if b.active else 'No':<7} {len(b.cut_preferences):>5}")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Income statement
+# ---------------------------------------------------------------------------
+
+def build_income_statement(
+    allocation: AllocationResult,
+    valuation,
+    purchase_price_cwt: float,
+    processor_key: str = DEFAULT_PROCESSOR,
+    region: str = DEFAULT_REGION,
+) -> IncomeStatement:
+    processors = load_processors()
+    processor = processors[processor_key]
+    hcw = valuation.hot_carcass_weight
+    live_weight = valuation.live_weight
+
+    # Revenue
+    allocated_rev = allocation.total_revenue
+    unallocated_rev = allocation.unallocated_value
+    byproduct_rev = valuation.byproduct_value
+    total_rev = allocated_rev + unallocated_rev + byproduct_rev
+
+    # Revenue detail by primal
+    rev_by_primal = {}
+    for a in allocation.allocations:
+        code = a.cut_code
+        if code in SUBPRIMAL_YIELDS:
+            primal = SUBPRIMAL_YIELDS[code][2]
+        elif code in GROUND_BEEF_PRODUCTS:
+            primal = "Trim"
+        else:
+            primal = "Other"
+        rev_by_primal[primal] = rev_by_primal.get(primal, 0.0) + a.line_revenue
+    for u in allocation.unallocated:
+        code = u["cut_code"]
+        if code in SUBPRIMAL_YIELDS:
+            primal = SUBPRIMAL_YIELDS[code][2]
+        elif code in GROUND_BEEF_PRODUCTS:
+            primal = "Trim"
+        else:
+            primal = "Other"
+        rev_by_primal[primal] = rev_by_primal.get(primal, 0.0) + u["value"]
+
+    # Revenue detail by channel (buyer_type)
+    rev_by_channel = {}
+    for a in allocation.allocations:
+        # Look up buyer_type from buyer_id — we use buyer_name as fallback label
+        channel = "buyer"  # default
+        rev_by_channel[channel] = rev_by_channel.get(channel, 0.0) + a.line_revenue
+    if unallocated_rev > 0:
+        rev_by_channel["wholesale"] = unallocated_rev
+    if byproduct_rev > 0:
+        rev_by_channel["byproduct"] = byproduct_rev
+
+    # COGS
+    animal_cost = purchase_price_cwt * live_weight / 100.0
+    kill_fee = processor["kill_fee"]
+    fab_cost = processor["fab_cost_per_lb"] * hcw
+    shrink_cost = processor["shrink_pct"] * valuation.total_cut_value
+    total_cogs = animal_cost + kill_fee + fab_cost + shrink_cost
+
+    # Gross profit
+    gross_profit = total_rev - total_cogs
+    gross_margin_pct = (gross_profit / total_rev * 100) if total_rev > 0 else 0.0
+
+    # Operating expenses
+    broker_fee = valuation.processing_cost
+    total_opex = broker_fee
+
+    # Net margin
+    net_margin = gross_profit - total_opex
+    net_margin_pct = (net_margin / total_rev * 100) if total_rev > 0 else 0.0
+
+    # Allocation detail for DB
+    alloc_detail = [
+        {"buyer_id": a.buyer_id, "buyer_name": a.buyer_name,
+         "cut_code": a.cut_code, "lbs": a.lbs_allocated,
+         "price_lb": a.price_per_lb, "revenue": a.line_revenue}
+        for a in allocation.allocations
+    ]
+
+    return IncomeStatement(
+        quality_grade=valuation.quality_grade,
+        yield_grade=valuation.yield_grade,
+        hcw=round(hcw, 1),
+        live_weight=round(live_weight, 1),
+        report_date=valuation.report_date,
+        region=region,
+        allocated_revenue=round(allocated_rev, 2),
+        unallocated_revenue=round(unallocated_rev, 2),
+        byproduct_revenue=round(byproduct_rev, 2),
+        total_revenue=round(total_rev, 2),
+        revenue_by_primal={k: round(v, 2) for k, v in rev_by_primal.items()},
+        revenue_by_channel={k: round(v, 2) for k, v in rev_by_channel.items()},
+        animal_cost=round(animal_cost, 2),
+        kill_fee=round(kill_fee, 2),
+        fabrication_cost=round(fab_cost, 2),
+        shrink_cost=round(shrink_cost, 2),
+        total_cogs=round(total_cogs, 2),
+        gross_profit=round(gross_profit, 2),
+        gross_margin_pct=round(gross_margin_pct, 1),
+        broker_fee=round(broker_fee, 2),
+        total_opex=round(total_opex, 2),
+        net_margin=round(net_margin, 2),
+        net_margin_pct=round(net_margin_pct, 1),
+        allocation_detail=alloc_detail,
+    )
+
+
+def build_income_statement_with_buyers(
+    buyers: List[BuyerProfile],
+    usda_prices: dict,
+    ground_beef_prices: dict,
+    valuation,
+    purchase_price_cwt: float,
+    processor_key: str = DEFAULT_PROCESSOR,
+    region: str = DEFAULT_REGION,
+) -> IncomeStatement:
+    allocation = allocate_carcass(
+        buyers, usda_prices, ground_beef_prices,
+        valuation, purchase_price_cwt, processor_key, region,
+    )
+
+    inc = build_income_statement(
+        allocation, valuation, purchase_price_cwt, processor_key, region,
+    )
+
+    # Enrich revenue_by_channel with actual buyer types
+    rev_by_channel = {}
+    buyer_map = {b.buyer_id: b.buyer_type for b in buyers}
+    for a in allocation.allocations:
+        channel = buyer_map.get(a.buyer_id, "unknown")
+        rev_by_channel[channel] = rev_by_channel.get(channel, 0.0) + a.line_revenue
+    if allocation.unallocated_value > 0:
+        rev_by_channel["wholesale"] = allocation.unallocated_value
+    if valuation.byproduct_value > 0:
+        rev_by_channel["byproduct"] = valuation.byproduct_value
+    inc.revenue_by_channel = {k: round(v, 2) for k, v in rev_by_channel.items()}
+
+    return inc
+
+
+def print_income_statement(inc: IncomeStatement):
+    regions = load_regions()
+    region_label = regions.get(inc.region, regions[DEFAULT_REGION])["label"]
+    print(f"\nINCOME STATEMENT — {inc.quality_grade.title()} YG{inc.yield_grade} | "
+          f"{inc.hcw:.0f} lb carcass | {region_label}")
+    print("=" * 64)
+
+    print("REVENUE")
+    print(f"  Allocated Sales (buyer-priced)     ${inc.allocated_revenue:>10,.2f}")
+    print(f"  Wholesale Remainder                ${inc.unallocated_revenue:>10,.2f}")
+    print(f"  Byproduct (hide/offal)             ${inc.byproduct_revenue:>10,.2f}")
+    print(f"                                     {'----------':>10}")
+    print(f"  TOTAL REVENUE                      ${inc.total_revenue:>10,.2f}")
+    print()
+
+    print("COST OF GOODS SOLD")
+    print(f"  Animal Purchase                   (${inc.animal_cost:>10,.2f})")
+    print(f"  Kill Fee                          (${inc.kill_fee:>10,.2f})")
+    print(f"  Fabrication                       (${inc.fabrication_cost:>10,.2f})")
+    print(f"  Cooler Shrink                     (${inc.shrink_cost:>10,.2f})")
+    print(f"                                     {'----------':>10}")
+    print(f"  TOTAL COGS                        (${inc.total_cogs:>10,.2f})")
+    print()
+
+    gp_sign = "" if inc.gross_profit >= 0 else "-"
+    print(f"GROSS PROFIT                         {gp_sign}${abs(inc.gross_profit):>9,.2f}   ({inc.gross_margin_pct:.1f}%)")
+    print()
+
+    print("OPERATING EXPENSES")
+    print(f"  Broker Fee ({load_broker_fee_pct():.0%})                   (${inc.broker_fee:>10,.2f})")
+    print(f"                                     {'----------':>10}")
+
+    nm_sign = "" if inc.net_margin >= 0 else "-"
+    print(f"NET MARGIN                           {nm_sign}${abs(inc.net_margin):>9,.2f}   ({inc.net_margin_pct:.1f}%)")
+    print()
+
+
+def print_income_comparison(statements: dict):
+    grades = ["prime", "choice", "select", "grassfed"]
+    available = [g for g in grades if g in statements]
+    if not available:
+        print("No income statements to compare.")
+        return
+
+    col_w = 11
+    header = f"{'':>28}" + "".join(f"{g.title():>{col_w}}" for g in available)
+    print(f"\nINCOME STATEMENT COMPARISON — All Grades")
+    print("=" * (28 + col_w * len(available)))
+    print(header)
+
+    def row(label, accessor, fmt="money"):
+        vals = []
+        for g in available:
+            v = accessor(statements[g])
+            if fmt == "money":
+                vals.append(f"${v:>{col_w - 1},.0f}")
+            elif fmt == "pct":
+                vals.append(f"{v:>{col_w - 1}.1f}%")
+            elif fmt == "money_neg":
+                vals.append(f"(${abs(v):>{col_w - 3},.0f})")
+        print(f"  {label:<26}" + "".join(vals))
+
+    print("REVENUE")
+    row("Allocated Sales", lambda s: s.allocated_revenue)
+    row("Wholesale", lambda s: s.unallocated_revenue)
+    row("Byproduct", lambda s: s.byproduct_revenue)
+    row("TOTAL", lambda s: s.total_revenue)
+
+    print("COGS")
+    row("Animal Purchase", lambda s: s.animal_cost, "money_neg")
+    row("Processing", lambda s: s.kill_fee + s.fabrication_cost + s.shrink_cost, "money_neg")
+    row("TOTAL COGS", lambda s: s.total_cogs, "money_neg")
+
+    print("GROSS PROFIT")
+    row("", lambda s: s.gross_profit)
+    row("Margin %", lambda s: s.gross_margin_pct, "pct")
+
+    print("NET MARGIN")
+    row("", lambda s: s.net_margin)
+    row("Margin %", lambda s: s.net_margin_pct, "pct")
     print()
 
 
@@ -375,7 +663,7 @@ def write_demand_excel(
     animals_needed: dict,
     allocation: AllocationResult,
     buyers: List[BuyerProfile],
-    filepath: str = "demand_report.xlsx",
+    filepath: str = os.path.join(REPORTS_DIR, "demand_report.xlsx"),
 ):
     try:
         from openpyxl import Workbook
@@ -509,7 +797,7 @@ def write_demand_excel(
         ws4.cell(row=i, column=3, value=b.buyer_type)
         ws4.cell(row=i, column=4, value=b.city)
         ws4.cell(row=i, column=5, value=b.state)
-        ws4.cell(row=i, column=6, value=REGIONS.get(b.region, {}).get("label", b.region))
+        ws4.cell(row=i, column=6, value=load_regions().get(b.region, {}).get("label", b.region))
         ws4.cell(row=i, column=7, value=b.min_quality_grade)
         ws4.cell(row=i, column=8, value=b.payment_terms_days)
         ws4.cell(row=i, column=9, value="Yes" if b.active else "No")
@@ -524,3 +812,115 @@ def write_demand_excel(
 
     wb.save(filepath)
     print(f"Demand report saved to {filepath}")
+
+
+def write_income_excel(
+    statements: dict,
+    filepath: str = os.path.join(REPORTS_DIR, "income_report.xlsx"),
+):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, numbers
+    except ImportError:
+        print("openpyxl not installed. Run: pip3 install openpyxl")
+        return
+
+    wb = Workbook()
+    hdr_font = Font(bold=True, size=11)
+    hdr_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    hdr_font_white = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    money_fmt = '#,##0.00'
+    pct_fmt = '0.0%'
+    acct_fmt = '#,##0.00_);(#,##0.00)'
+
+    grades = ["prime", "choice", "select", "grassfed"]
+    available = [g for g in grades if g in statements]
+
+    def style_header(ws, row, ncols):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.font = hdr_font_white
+            cell.fill = hdr_fill
+            cell.alignment = Alignment(horizontal="center")
+
+    # --- Sheet 1: Income Statement (one column per grade) ---
+    ws = wb.active
+    ws.title = "Income Statement"
+
+    # Headers
+    ws.cell(row=1, column=1, value="Line Item").font = bold_font
+    for ci, g in enumerate(available, 2):
+        ws.cell(row=1, column=ci, value=g.title()).font = bold_font
+    style_header(ws, 1, 1 + len(available))
+
+    line_items = [
+        ("REVENUE", None),
+        ("  Allocated Sales", "allocated_revenue"),
+        ("  Wholesale Remainder", "unallocated_revenue"),
+        ("  Byproduct (hide/offal)", "byproduct_revenue"),
+        ("  TOTAL REVENUE", "total_revenue"),
+        ("", None),
+        ("COST OF GOODS SOLD", None),
+        ("  Animal Purchase", "animal_cost"),
+        ("  Kill Fee", "kill_fee"),
+        ("  Fabrication", "fabrication_cost"),
+        ("  Cooler Shrink", "shrink_cost"),
+        ("  TOTAL COGS", "total_cogs"),
+        ("", None),
+        ("GROSS PROFIT", "gross_profit"),
+        ("  Margin %", "gross_margin_pct"),
+        ("", None),
+        ("OPERATING EXPENSES", None),
+        ("  Broker Fee", "broker_fee"),
+        ("", None),
+        ("NET MARGIN", "net_margin"),
+        ("  Margin %", "net_margin_pct"),
+    ]
+
+    for ri, (label, attr) in enumerate(line_items, 2):
+        cell = ws.cell(row=ri, column=1, value=label)
+        is_total = label.strip().startswith("TOTAL") or label in ("GROSS PROFIT", "NET MARGIN", "REVENUE", "COST OF GOODS SOLD", "OPERATING EXPENSES")
+        if is_total:
+            cell.font = bold_font
+
+        if attr:
+            for ci, g in enumerate(available, 2):
+                val = getattr(statements[g], attr)
+                c = ws.cell(row=ri, column=ci, value=val)
+                if "pct" in attr:
+                    c.number_format = '0.0"%"'
+                else:
+                    c.number_format = acct_fmt
+                if is_total:
+                    c.font = bold_font
+
+    ws.column_dimensions["A"].width = 28
+    for ci in range(2, 2 + len(available)):
+        ws.column_dimensions[chr(64 + ci)].width = 16
+
+    # --- Sheet 2: Revenue by Primal ---
+    ws2 = wb.create_sheet("Revenue by Primal")
+    ws2.cell(row=1, column=1, value="Primal").font = bold_font
+    for ci, g in enumerate(available, 2):
+        ws2.cell(row=1, column=ci, value=g.title()).font = bold_font
+    style_header(ws2, 1, 1 + len(available))
+
+    all_primals = set()
+    for s in statements.values():
+        all_primals.update(s.revenue_by_primal.keys())
+    primal_order = [p for p in PRIMAL_ORDER if p in all_primals]
+    primal_order += sorted(all_primals - set(PRIMAL_ORDER))
+
+    for ri, primal in enumerate(primal_order, 2):
+        ws2.cell(row=ri, column=1, value=primal)
+        for ci, g in enumerate(available, 2):
+            val = statements[g].revenue_by_primal.get(primal, 0)
+            ws2.cell(row=ri, column=ci, value=val).number_format = money_fmt
+
+    ws2.column_dimensions["A"].width = 16
+    for ci in range(2, 2 + len(available)):
+        ws2.column_dimensions[chr(64 + ci)].width = 14
+
+    wb.save(filepath)
+    print(f"Income report saved to {filepath}")

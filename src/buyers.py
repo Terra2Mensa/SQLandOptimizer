@@ -5,11 +5,12 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
 from config import (
-    BUYER_TYPES, REGIONS, GROUND_BEEF_PRODUCTS, GRADE_RANK,
+    BUYER_TYPES, GROUND_BEEF_PRODUCTS, GRADE_RANK,
     SUBPRIMAL_YIELDS, DEFAULT_REGION,
 )
+from config_loader import load_regions
 
-BUYERS_JSON = os.path.join(os.path.dirname(__file__), "buyers.json")
+BUYERS_JSON = os.path.join(os.path.dirname(__file__), "..", "data", "buyers.json")
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,15 @@ class BuyerProfile:
     contact_name: str = ""
     contact_email: str = ""
     contact_phone: str = ""
+    business_name: str = ""
+    address_line1: str = ""
+    address_line2: str = ""
+    zip_code: str = ""
+    license_number: str = ""
+    delivery_zone: str = ""
+    delivery_day: str = ""
+    credit_limit: float = 0.0
+    notes: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +66,8 @@ def create_buyer_from_template(
     **kwargs,
 ) -> BuyerProfile:
     template = BUYER_TYPES[buyer_type]
-    region_info = REGIONS.get(region, REGIONS[DEFAULT_REGION])
+    regions = load_regions()
+    region_info = regions.get(region, regions[DEFAULT_REGION])
     base_volume = template["weekly_volume_lbs"]
 
     prefs = []
@@ -115,7 +126,8 @@ def compute_all_buyer_prices(
     ground_beef_prices: dict,
     region: str = DEFAULT_REGION,
 ) -> list:
-    regional_adj = REGIONS.get(region, REGIONS[DEFAULT_REGION])["pricing_adjustment"]
+    regions = load_regions()
+    regional_adj = regions.get(region, regions[DEFAULT_REGION])["pricing_adjustment"]
     results = []
     for pref in buyer.cut_preferences:
         base_cwt = _get_base_price_cwt(pref.cut_code, usda_prices, ground_beef_prices)

@@ -1,0 +1,72 @@
+{
+  "date": "2026-03-08",
+  "source": "manual",
+  "cuts": {
+    "breast_bnls": {
+      "description": "Boneless Skinless Breast",
+      "price_per_lb": 3.45,
+      "yield_pct": 24.0,
+      "category": "White Meat"
+    },
+    "breast_bone": {
+      "description": "Bone-In Breast",
+      "price_per_lb": 2.89,
+      "yield_pct": 28.0,
+      "category": "White Meat"
+    },
+    "tender": {
+      "description": "Tenderloins",
+      "price_per_lb": 4.5,
+      "yield_pct": 4.0,
+      "category": "White Meat"
+    },
+    "thigh_bnls": {
+      "description": "Boneless Thigh",
+      "price_per_lb": 2.75,
+      "yield_pct": 10.0,
+      "category": "Dark Meat"
+    },
+    "thigh_bone": {
+      "description": "Bone-In Thigh",
+      "price_per_lb": 1.85,
+      "yield_pct": 12.0,
+      "category": "Dark Meat"
+    },
+    "drumstick": {
+      "description": "Drumstick",
+      "price_per_lb": 1.45,
+      "yield_pct": 10.0,
+      "category": "Dark Meat"
+    },
+    "wing_whole": {
+      "description": "Whole Wing",
+      "price_per_lb": 2.1,
+      "yield_pct": 8.0,
+      "category": "Wing"
+    },
+    "wing_flat": {
+      "description": "Wing Flat",
+      "price_per_lb": 2.85,
+      "yield_pct": 3.5,
+      "category": "Wing"
+    },
+    "wing_drum": {
+      "description": "Wing Drumette",
+      "price_per_lb": 2.65,
+      "yield_pct": 3.0,
+      "category": "Wing"
+    },
+    "back_neck": {
+      "description": "Back & Neck",
+      "price_per_lb": 0.55,
+      "yield_pct": 15.0,
+      "category": "Other"
+    },
+    "giblets": {
+      "description": "Giblets",
+      "price_per_lb": 1.2,
+      "yield_pct": 5.0,
+      "category": "Other"
+    }
+  }
+}
