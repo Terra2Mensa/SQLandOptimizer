@@ -533,6 +533,90 @@ CREATE INDEX IF NOT EXISTS idx_po_lines_cut_status ON po_lines(cut_code, status)
 
 -- Processor Capabilities indexes
 CREATE INDEX IF NOT EXISTS idx_proc_cap_lookup ON config_processor_capabilities(processor_key, species, effective_date DESC);
+
+-- Optimizer tables
+
+CREATE TABLE IF NOT EXISTS processors (
+    id SERIAL PRIMARY KEY,
+    processor_key VARCHAR(50) UNIQUE NOT NULL,
+    company_name VARCHAR(100) NOT NULL,
+    address_line1 VARCHAR(200),
+    city VARCHAR(80),
+    state VARCHAR(10),
+    zip_code VARCHAR(20),
+    latitude NUMERIC(9,6),
+    longitude NUMERIC(9,6),
+    phone VARCHAR(30),
+    is_buyer_of_last_resort BOOLEAN DEFAULT FALSE,
+    active BOOLEAN DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS config_cut_specs (
+    id SERIAL PRIMARY KEY,
+    species VARCHAR(20) NOT NULL,
+    primal_code VARCHAR(30) NOT NULL,
+    primal_name VARCHAR(80) NOT NULL,
+    cut_code VARCHAR(30) NOT NULL,
+    cut_name VARCHAR(100) NOT NULL,
+    yield_pct NUMERIC(5,2) NOT NULL,
+    min_grade VARCHAR(20),
+    is_premium BOOLEAN DEFAULT FALSE,
+    notes TEXT,
+    UNIQUE (species, cut_code)
+);
+
+CREATE TABLE IF NOT EXISTS config_grade_hierarchy (
+    id SERIAL PRIMARY KEY,
+    species VARCHAR(20) NOT NULL,
+    grade_code VARCHAR(20) NOT NULL,
+    grade_name VARCHAR(50) NOT NULL,
+    rank_order INTEGER NOT NULL,
+    UNIQUE (species, grade_code)
+);
+
+CREATE TABLE IF NOT EXISTS slaughter_orders (
+    id SERIAL PRIMARY KEY,
+    order_number VARCHAR(50) UNIQUE NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'planned',
+    species VARCHAR(20) NOT NULL,
+    animal_id VARCHAR(50) REFERENCES farmer_inventory(animal_id),
+    processor_key VARCHAR(50) REFERENCES processors(processor_key),
+    optimizer_run_id VARCHAR(50),
+    estimated_hanging_weight NUMERIC(10,2),
+    processing_cost_total NUMERIC(10,2),
+    farmer_to_proc_distance NUMERIC(8,2),
+    avg_cust_to_proc_distance NUMERIC(8,2),
+    pct_allocated_to_orders NUMERIC(5,2),
+    pct_to_last_resort NUMERIC(5,2),
+    optimizer_score NUMERIC(10,4),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS slaughter_order_lines (
+    id SERIAL PRIMARY KEY,
+    slaughter_order_id INTEGER NOT NULL REFERENCES slaughter_orders(id) ON DELETE CASCADE,
+    cut_code VARCHAR(30) NOT NULL,
+    total_lbs NUMERIC(8,2) NOT NULL,
+    allocated_to_po NUMERIC(8,2) DEFAULT 0,
+    allocated_to_lor NUMERIC(8,2) DEFAULT 0,
+    po_number VARCHAR(50),
+    po_line_id INTEGER,
+    CONSTRAINT chk_allocation CHECK (allocated_to_po + allocated_to_lor <= total_lbs + 0.01)
+);
+
+-- Optimizer indexes
+CREATE INDEX IF NOT EXISTS idx_processors_active ON processors(active) WHERE active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_cut_specs_species ON config_cut_specs(species);
+CREATE INDEX IF NOT EXISTS idx_cut_specs_cut ON config_cut_specs(cut_code);
+CREATE INDEX IF NOT EXISTS idx_grade_hierarchy_species ON config_grade_hierarchy(species);
+CREATE INDEX IF NOT EXISTS idx_slaughter_status ON slaughter_orders(status);
+CREATE INDEX IF NOT EXISTS idx_slaughter_run ON slaughter_orders(optimizer_run_id);
+CREATE INDEX IF NOT EXISTS idx_slaughter_lines_order ON slaughter_order_lines(slaughter_order_id);
+CREATE INDEX IF NOT EXISTS idx_slaughter_lines_po ON slaughter_order_lines(po_number);
 """
 
 
