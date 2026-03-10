@@ -1,91 +1,99 @@
-# Setup — Multi-Species Valuation Engine
+# Multi-Species Valuation Engine — Setup Guide
 
 ## Prerequisites
 
-- Python 3.10+
-- PostgreSQL (any recent version — 14, 15, 16, 17)
-- macOS or Linux
+- **Python 3.10+**
+- **PostgreSQL 14+** (any recent version works)
 
 ## Quick Start
 
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/TerraMensa95/Business-Files.git cattle-valuation
-cd cattle-valuation
-```
-
-### 2. Install Python dependencies
+### 1. Install Python dependencies
 
 ```bash
 pip3 install -r requirements.txt
 ```
 
-### 3. Configure environment
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
 Edit `.env` and fill in:
-- `MARS_API_KEY` — your USDA MARS API key
-- `DB_USER` — your PostgreSQL username (usually your system username)
-- `DB_PASSWORD` — your PostgreSQL password (leave blank if using local trust auth)
+- `MARS_API_KEY` — get from [USDA MARS portal](https://marsapi.ams.usda.gov)
+- `DB_USER` — your PostgreSQL username
+- `DB_PASSWORD` — your PostgreSQL password (leave blank if using peer/trust auth)
 
-### 4. Set up the database
+### 3. Set up the database
 
 ```bash
+chmod +x setup_db.sh
 ./setup_db.sh
 ```
 
-This creates the `cattle_valuation` database and initializes all tables.
+This creates the `cattle_valuation` database and initializes all tables. Safe to run multiple times.
 
-### 5. Run a valuation
+### 4. Test a valuation
 
 ```bash
 cd src
-python3 cattle_valuation.py --all-grades --save-db
-python3 pork_valuation.py --save-db
-python3 lamb_valuation.py --save-db
+python3 cattle_valuation.py --all-grades
 ```
 
-### 6. (Optional) Set up daily automation
+You should see a valuation report printed and an Excel file saved to `reports/`.
+
+### 5. Daily automation (optional)
 
 ```bash
+chmod +x setup_schedule.sh
 ./setup_schedule.sh
 ```
 
-This installs a daily 12:30 PM scheduled run (launchd on macOS, cron on Linux).
+- **macOS**: installs a launchd agent that runs at 12:30 PM daily
+- **Linux**: offers to add a cron entry
 
-## Manual-Entry Species
+Edit `run_daily.sh` to control which species run and what options are used.
 
-Chicken and goat have no USDA API — enter prices manually:
+## Species Overview
+
+| Species | Script | Data Source |
+|---------|--------|-------------|
+| Cattle | `cattle_valuation.py` | USDA DataMart + MARS (automatic) |
+| Pork | `pork_valuation.py` | USDA DataMart (automatic) |
+| Lamb | `lamb_valuation.py` | USDA DataMart (automatic) |
+| Chicken | `chicken_valuation.py` | Manual entry only |
+| Goat | `goat_valuation.py` | Manual entry only |
+
+For chicken and goat, enter prices first:
 
 ```bash
 cd src
-python3 manual_entry.py chicken
-python3 manual_entry.py goat
+python3 manual_entry.py
 ```
-
-## Budget Workbook
-
-Generate a flexible budget Excel workbook seeded with latest DB prices:
-
-```bash
-cd src
-python3 budget_workbook.py
-python3 budget_workbook.py --start-month 2026-04
-python3 budget_workbook.py --output ~/Desktop/budget.xlsx
-```
-
-Output goes to `reports/` by default.
 
 ## Project Structure
 
 ```
-src/            Python source (all scripts run from here)
-sql/            SQL migration scripts
-data/           JSON data files (buyers, manual prices)
-reports/        Generated Excel reports (gitignored)
-logs/           Daily run logs (gitignored, 30-day retention)
+├── src/            Python source (all scripts run from here)
+├── sql/            SQL migration scripts
+├── data/           JSON data files (buyers, manual prices)
+├── reports/        Excel output (gitignored)
+├── logs/           Daily run logs (auto-cleaned after 30 days)
+├── run_daily.sh    Daily runner (edit to configure)
+├── setup_db.sh     Database setup
+├── setup_schedule.sh  Automation setup
+├── .env.example    Environment template
+└── requirements.txt
 ```
+
+## Troubleshooting
+
+**"psycopg2 not installed"** — Run `pip3 install psycopg2-binary`
+
+**"connection refused"** — Make sure PostgreSQL is running:
+- macOS: `brew services start postgresql@17`
+- Linux: `sudo systemctl start postgresql`
+
+**"database does not exist"** — Run `./setup_db.sh`
+
+**"MARS API key missing"** — Cattle valuations still work (MARS is only for Indiana auction data). Set the key in `.env` if you need auction prices.
