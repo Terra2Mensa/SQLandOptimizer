@@ -400,6 +400,139 @@ CREATE INDEX IF NOT EXISTS idx_pork_live_date ON pork_live_prices(report_date);
 CREATE INDEX IF NOT EXISTS idx_lamb_cutout_date ON lamb_cutout_prices(report_date);
 CREATE INDEX IF NOT EXISTS idx_lamb_summary_date ON lamb_carcass_summary(report_date);
 CREATE INDEX IF NOT EXISTS idx_manual_species ON manual_species_prices(species, entry_date);
+
+-- D2C + Farmer tables
+
+CREATE TABLE IF NOT EXISTS farmers (
+    id SERIAL PRIMARY KEY,
+    farmer_id VARCHAR(50) UNIQUE NOT NULL,
+    company_name VARCHAR(150) NOT NULL,
+    contact_name VARCHAR(100),
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(30),
+    address_line1 VARCHAR(150),
+    address_line2 VARCHAR(150),
+    city VARCHAR(50),
+    state VARCHAR(10),
+    zip_code VARCHAR(20),
+    latitude NUMERIC(9,6),
+    longitude NUMERIC(9,6),
+    active BOOLEAN DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS farmer_inventory (
+    id SERIAL PRIMARY KEY,
+    animal_id VARCHAR(50) UNIQUE NOT NULL,
+    farmer_id VARCHAR(50) NOT NULL REFERENCES farmers(farmer_id),
+    species VARCHAR(20) NOT NULL,
+    breed VARCHAR(50),
+    lot_number VARCHAR(50),
+    live_weight_est NUMERIC(10,1),
+    quality_grade_est VARCHAR(20),
+    yield_grade_est INTEGER,
+    dressing_pct_est NUMERIC(5,3),
+    age_months INTEGER,
+    sex VARCHAR(10),
+    frame_score INTEGER,
+    expected_finish_date DATE,
+    asking_price_per_lb NUMERIC(10,4),
+    asking_price_head NUMERIC(10,2),
+    status VARCHAR(20) NOT NULL DEFAULT 'available',
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dtc_customers (
+    id SERIAL PRIMARY KEY,
+    customer_id VARCHAR(50) UNIQUE NOT NULL,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    phone VARCHAR(30) NOT NULL,
+    zip_code VARCHAR(20) NOT NULL,
+    address_line1 VARCHAR(150),
+    address_line2 VARCHAR(150),
+    city VARCHAR(50),
+    state VARCHAR(10),
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id SERIAL PRIMARY KEY,
+    po_number VARCHAR(50) UNIQUE NOT NULL,
+    customer_id VARCHAR(50) NOT NULL REFERENCES dtc_customers(customer_id),
+    species VARCHAR(20) NOT NULL,
+    quality_grade VARCHAR(20),
+    carcass_portion VARCHAR(20) NOT NULL,
+    order_date TIMESTAMP NOT NULL DEFAULT NOW(),
+    requested_delivery_date DATE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    deposit_amount NUMERIC(10,2) DEFAULT 0,
+    total_estimated NUMERIC(12,2),
+    total_final NUMERIC(12,2),
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS po_lines (
+    id SERIAL PRIMARY KEY,
+    po_number VARCHAR(50) NOT NULL REFERENCES purchase_orders(po_number) ON DELETE CASCADE,
+    cut_code VARCHAR(20) NOT NULL,
+    description VARCHAR(100),
+    primal VARCHAR(20),
+    quantity_lbs NUMERIC(10,1) NOT NULL,
+    price_per_lb NUMERIC(8,4) NOT NULL,
+    line_total NUMERIC(10,2) NOT NULL,
+    fulfilled_lbs NUMERIC(10,1) DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS config_processor_capabilities (
+    id SERIAL PRIMARY KEY,
+    processor_key VARCHAR(50) NOT NULL,
+    species VARCHAR(20) NOT NULL,
+    daily_capacity_head INTEGER,
+    city VARCHAR(50),
+    state VARCHAR(10),
+    latitude NUMERIC(9,6),
+    longitude NUMERIC(9,6),
+    organic_certified BOOLEAN DEFAULT FALSE,
+    usda_inspected BOOLEAN DEFAULT TRUE,
+    effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    UNIQUE (processor_key, species, effective_date)
+);
+
+-- Farmer indexes
+CREATE INDEX IF NOT EXISTS idx_farmers_active ON farmers(active) WHERE active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_farmers_state ON farmers(state);
+
+-- Inventory indexes
+CREATE INDEX IF NOT EXISTS idx_inventory_species_status ON farmer_inventory(species, status);
+CREATE INDEX IF NOT EXISTS idx_inventory_species_grade ON farmer_inventory(species, quality_grade_est, status);
+CREATE INDEX IF NOT EXISTS idx_inventory_farmer ON farmer_inventory(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_finish_date ON farmer_inventory(expected_finish_date) WHERE status = 'available';
+
+-- DTC Customer indexes
+CREATE INDEX IF NOT EXISTS idx_dtc_customers_email ON dtc_customers(email);
+
+-- Purchase Order indexes
+CREATE INDEX IF NOT EXISTS idx_po_customer ON purchase_orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);
+CREATE INDEX IF NOT EXISTS idx_po_species_status ON purchase_orders(species, status);
+
+-- PO Line indexes
+CREATE INDEX IF NOT EXISTS idx_po_lines_po ON po_lines(po_number);
+CREATE INDEX IF NOT EXISTS idx_po_lines_cut_status ON po_lines(cut_code, status);
+
+-- Processor Capabilities indexes
+CREATE INDEX IF NOT EXISTS idx_proc_cap_lookup ON config_processor_capabilities(processor_key, species, effective_date DESC);
 """
 
 
@@ -1001,6 +1134,377 @@ def get_latest_manual_prices(species: str) -> list:
                 ORDER BY cut_code, entry_date DESC
             """, (species,))
             return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# D2C + Farmer CRUD
+# ---------------------------------------------------------------------------
+
+def save_farmer(farmer: dict):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO farmers
+                (farmer_id, company_name, contact_name, contact_email, contact_phone,
+                 address_line1, address_line2, city, state, zip_code,
+                 latitude, longitude, active, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (farmer_id) DO UPDATE SET
+                    company_name = EXCLUDED.company_name,
+                    contact_name = EXCLUDED.contact_name,
+                    contact_email = EXCLUDED.contact_email,
+                    contact_phone = EXCLUDED.contact_phone,
+                    address_line1 = EXCLUDED.address_line1,
+                    address_line2 = EXCLUDED.address_line2,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    zip_code = EXCLUDED.zip_code,
+                    latitude = EXCLUDED.latitude,
+                    longitude = EXCLUDED.longitude,
+                    active = EXCLUDED.active,
+                    notes = EXCLUDED.notes,
+                    updated_at = NOW()
+            """, (
+                farmer.get('farmer_id'), farmer.get('company_name'),
+                farmer.get('contact_name'), farmer.get('contact_email'),
+                farmer.get('contact_phone'),
+                farmer.get('address_line1'), farmer.get('address_line2'),
+                farmer.get('city'), farmer.get('state'), farmer.get('zip_code'),
+                farmer.get('latitude'), farmer.get('longitude'),
+                farmer.get('active', True), farmer.get('notes'),
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_farmers(active_only: bool = True) -> list:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            if active_only:
+                cur.execute("SELECT * FROM farmers WHERE active = TRUE ORDER BY company_name")
+            else:
+                cur.execute("SELECT * FROM farmers ORDER BY company_name")
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_farmer(farmer_id: str) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM farmers WHERE farmer_id = %s", (farmer_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_animal(animal: dict):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO farmer_inventory
+                (animal_id, farmer_id, species, breed, lot_number,
+                 live_weight_est, quality_grade_est, yield_grade_est,
+                 dressing_pct_est, age_months, sex, frame_score,
+                 expected_finish_date, asking_price_per_lb, asking_price_head,
+                 status, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                animal.get('animal_id'), animal.get('farmer_id'),
+                animal.get('species'), animal.get('breed'),
+                animal.get('lot_number'), animal.get('live_weight_est'),
+                animal.get('quality_grade_est'), animal.get('yield_grade_est'),
+                animal.get('dressing_pct_est'), animal.get('age_months'),
+                animal.get('sex'), animal.get('frame_score'),
+                animal.get('expected_finish_date'),
+                animal.get('asking_price_per_lb'), animal.get('asking_price_head'),
+                animal.get('status', 'available'), animal.get('notes'),
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_animal_status(animal_id: str, status: str):
+    from config import FARMER_INVENTORY_STATUSES
+    if status not in FARMER_INVENTORY_STATUSES:
+        raise ValueError(f"Invalid status '{status}'. Must be one of: {FARMER_INVENTORY_STATUSES}")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE farmer_inventory SET status = %s, updated_at = NOW()
+                WHERE animal_id = %s
+            """, (status, animal_id))
+            if cur.rowcount == 0:
+                raise ValueError(f"Animal '{animal_id}' not found")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_available_animals(species: str, quality_grade: str = None) -> list:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            if quality_grade:
+                cur.execute("""
+                    SELECT * FROM farmer_inventory
+                    WHERE species = %s AND status = 'available'
+                      AND quality_grade_est = %s
+                    ORDER BY expected_finish_date, live_weight_est DESC
+                """, (species, quality_grade))
+            else:
+                cur.execute("""
+                    SELECT * FROM farmer_inventory
+                    WHERE species = %s AND status = 'available'
+                    ORDER BY expected_finish_date, live_weight_est DESC
+                """, (species,))
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_farmer_animals(farmer_id: str) -> list:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM farmer_inventory
+                WHERE farmer_id = %s ORDER BY created_at DESC
+            """, (farmer_id,))
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def save_dtc_customer(customer: dict):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO dtc_customers
+                (customer_id, first_name, last_name, email, phone, zip_code,
+                 address_line1, address_line2, city, state, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (customer_id) DO UPDATE SET
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    email = EXCLUDED.email,
+                    phone = EXCLUDED.phone,
+                    zip_code = EXCLUDED.zip_code,
+                    address_line1 = EXCLUDED.address_line1,
+                    address_line2 = EXCLUDED.address_line2,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    notes = EXCLUDED.notes,
+                    updated_at = NOW()
+            """, (
+                customer.get('customer_id'), customer.get('first_name'),
+                customer.get('last_name'), customer.get('email'),
+                customer.get('phone'), customer.get('zip_code'),
+                customer.get('address_line1'), customer.get('address_line2'),
+                customer.get('city'), customer.get('state'), customer.get('notes'),
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_dtc_customer(customer_id: str) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM dtc_customers WHERE customer_id = %s", (customer_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_purchase_order(po_number: str, customer_id: str, species: str,
+                        quality_grade: str, carcass_portion: str,
+                        requested_delivery_date=None, deposit_amount: float = 0,
+                        notes: str = None, carcass_weight: float = None,
+                        price_per_lb_override: dict = None):
+    """Insert PO header and auto-generate po_lines from species yield tables.
+
+    Args:
+        carcass_weight: estimated carcass weight in lbs (used to calculate line quantities).
+                        If None, uses species defaults from config.
+        price_per_lb_override: optional dict of {cut_code: price_per_lb} overrides.
+                               If a cut_code is missing, defaults to 0.
+    """
+    from config import (SUBPRIMAL_YIELDS, PORK_CUT_YIELDS, LAMB_SUBPRIMAL_YIELDS,
+                        CARCASS_PORTIONS, FRONT_QUARTER_PRIMALS, HIND_QUARTER_PRIMALS,
+                        DEFAULT_LIVE_WEIGHT, DRESS_PCT_BY_YG, DEFAULT_YIELD_GRADE,
+                        DEFAULT_PORK_LIVE_WEIGHT, DEFAULT_PORK_DRESS_PCT,
+                        DEFAULT_LAMB_LIVE_WEIGHT, DEFAULT_LAMB_DRESS_PCT)
+
+    if carcass_portion not in CARCASS_PORTIONS:
+        raise ValueError(f"Invalid carcass_portion '{carcass_portion}'. Must be one of: {CARCASS_PORTIONS}")
+
+    # Select yield table and default carcass weight by species
+    if species == 'cattle':
+        yield_table = SUBPRIMAL_YIELDS
+        if carcass_weight is None:
+            carcass_weight = DEFAULT_LIVE_WEIGHT * DRESS_PCT_BY_YG[DEFAULT_YIELD_GRADE]
+    elif species == 'pork':
+        yield_table = PORK_CUT_YIELDS
+        if carcass_weight is None:
+            carcass_weight = DEFAULT_PORK_LIVE_WEIGHT * DEFAULT_PORK_DRESS_PCT
+    elif species == 'lamb':
+        yield_table = LAMB_SUBPRIMAL_YIELDS
+        if carcass_weight is None:
+            carcass_weight = DEFAULT_LAMB_LIVE_WEIGHT * DEFAULT_LAMB_DRESS_PCT
+    else:
+        raise ValueError(f"Unsupported species '{species}' for PO line generation")
+
+    if price_per_lb_override is None:
+        price_per_lb_override = {}
+
+    # Build line items from yield table filtered by portion
+    lines = []
+    for cut_code, (desc, yield_pct, primal) in yield_table.items():
+        if carcass_portion == 'quarter_front':
+            if primal not in FRONT_QUARTER_PRIMALS:
+                continue
+        elif carcass_portion == 'quarter_hind':
+            if primal not in HIND_QUARTER_PRIMALS:
+                continue
+
+        qty = carcass_weight * (yield_pct / 100.0)
+        if carcass_portion == 'half':
+            qty *= 0.5
+
+        ppl = price_per_lb_override.get(cut_code, 0)
+        lines.append({
+            'cut_code': cut_code,
+            'description': desc,
+            'primal': primal,
+            'quantity_lbs': round(qty, 1),
+            'price_per_lb': ppl,
+            'line_total': round(qty * ppl, 2),
+        })
+
+    total_estimated = sum(ln['line_total'] for ln in lines)
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO purchase_orders
+                (po_number, customer_id, species, quality_grade, carcass_portion,
+                 requested_delivery_date, deposit_amount, total_estimated, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (po_number, customer_id, species, quality_grade, carcass_portion,
+                  requested_delivery_date, deposit_amount, total_estimated, notes))
+            for ln in lines:
+                cur.execute("""
+                    INSERT INTO po_lines
+                    (po_number, cut_code, description, primal,
+                     quantity_lbs, price_per_lb, line_total)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (po_number, ln['cut_code'], ln['description'], ln['primal'],
+                      ln['quantity_lbs'], ln['price_per_lb'], ln['line_total']))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_po_status(po_number: str, status: str):
+    from config import PO_STATUSES
+    if status not in PO_STATUSES:
+        raise ValueError(f"Invalid status '{status}'. Must be one of: {PO_STATUSES}")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE purchase_orders SET status = %s, updated_at = NOW()
+                WHERE po_number = %s
+            """, (status, po_number))
+            if cur.rowcount == 0:
+                raise ValueError(f"PO '{po_number}' not found")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_purchase_order(po_number: str) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM purchase_orders WHERE po_number = %s", (po_number,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            po = dict(row)
+            cur.execute("SELECT * FROM po_lines WHERE po_number = %s", (po_number,))
+            po["lines"] = [dict(r) for r in cur.fetchall()]
+            return po
+    finally:
+        conn.close()
+
+
+def get_pending_demand(species: str) -> list:
+    """Aggregate unfulfilled PO line demand by cut_code for a species."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("""
+                SELECT pl.cut_code, pl.description, pl.primal,
+                       SUM(pl.quantity_lbs - pl.fulfilled_lbs) AS pending_lbs,
+                       COUNT(*) AS line_count
+                FROM po_lines pl
+                JOIN purchase_orders po ON po.po_number = pl.po_number
+                WHERE po.species = %s
+                  AND pl.status IN ('pending', 'partial')
+                  AND po.status NOT IN ('cancelled', 'fulfilled')
+                GROUP BY pl.cut_code, pl.description, pl.primal
+                HAVING SUM(pl.quantity_lbs - pl.fulfilled_lbs) > 0
+                ORDER BY pending_lbs DESC
+            """, (species,))
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def save_processor_capability(processor_key: str, species: str,
+                              daily_capacity_head: int = None,
+                              city: str = None, state: str = None,
+                              latitude: float = None, longitude: float = None,
+                              organic_certified: bool = False,
+                              usda_inspected: bool = True,
+                              effective_date=None):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO config_processor_capabilities
+                (processor_key, species, daily_capacity_head,
+                 city, state, latitude, longitude,
+                 organic_certified, usda_inspected, effective_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_DATE))
+                ON CONFLICT (processor_key, species, effective_date) DO UPDATE SET
+                    daily_capacity_head = EXCLUDED.daily_capacity_head,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    latitude = EXCLUDED.latitude,
+                    longitude = EXCLUDED.longitude,
+                    organic_certified = EXCLUDED.organic_certified,
+                    usda_inspected = EXCLUDED.usda_inspected
+            """, (processor_key, species, daily_capacity_head,
+                  city, state, latitude, longitude,
+                  organic_certified, usda_inspected, effective_date))
+        conn.commit()
     finally:
         conn.close()
 

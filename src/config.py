@@ -174,6 +174,16 @@ GROUND_BEEF_PRODUCTS = {
 ORDER_STATUSES = ["pending", "confirmed", "fulfilled", "invoiced", "paid", "cancelled"]
 INVOICE_STATUSES = ["draft", "sent", "partial", "paid", "overdue"]
 
+# D2C + Farmer statuses
+FARMER_INVENTORY_STATUSES = ["available", "reserved", "sold", "processing", "complete"]
+PO_STATUSES = ["pending", "planned", "processing", "fulfilled", "cancelled"]
+PO_LINE_STATUSES = ["pending", "partial", "fulfilled", "cancelled"]
+CARCASS_PORTIONS = ["whole", "half", "quarter_front", "quarter_hind"]
+# Primal-to-portion mapping for auto-generating PO lines:
+FRONT_QUARTER_PRIMALS = ["Rib", "Chuck", "Brisket", "Plate"]
+HIND_QUARTER_PRIMALS = ["Loin", "Round", "Flank"]
+ANIMAL_SEX_OPTIONS = ["steer", "heifer", "cow", "bull"]
+
 BUYER_TYPES = {
     "fine_dining": {
         "label": "Fine Dining",
