@@ -26,6 +26,7 @@ from config import (
     DEFAULT_PORK_DRESS_PCT, DEFAULT_LAMB_DRESS_PCT,
     DEFAULT_CHICKEN_DRESS_PCT, DEFAULT_GOAT_DRESS_PCT,
     PROCESSORS, PORK_PROCESSORS, LAMB_PROCESSORS,
+    PROCESSING_RATES,
 )
 
 # ---------------------------------------------------------------------------
@@ -529,7 +530,7 @@ def select_processor(assembly: Assembly, animal: dict, processors: list,
             if scheduled >= capacity:
                 continue
 
-        # Processing cost
+        # Processing cost — try processor-specific config, fall back to species rates
         cost_cfg = None
         if species == 'cattle':
             cost_cfg = PROCESSORS.get(pkey)
@@ -537,6 +538,9 @@ def select_processor(assembly: Assembly, animal: dict, processors: list,
             cost_cfg = PORK_PROCESSORS.get(pkey)
         elif species == 'lamb':
             cost_cfg = LAMB_PROCESSORS.get(pkey)
+
+        if not cost_cfg:
+            cost_cfg = PROCESSING_RATES.get(species)
 
         if cost_cfg:
             proc_cost = cost_cfg['kill_fee'] + (cost_cfg['fab_cost_per_lb'] * hw)

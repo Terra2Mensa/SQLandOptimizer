@@ -298,6 +298,12 @@ BREED_CONFIG = {
         'yg': (2, 4), 'dress': (0.58, 0.64),
         'sex': [("steer", 0.60), ("heifer", 0.35), ("cow", 0.05)],
         'age': (14, 24), 'price_lb': (1.70, 2.30), 'price_head': (1900, 3100),
+        'price_lb_by_grade': {
+            'prime':    (2.73, 3.34),   # ~$3.04 ± 10%
+            'grassfed': (2.79, 3.41),   # ~$3.10 ± 10%
+            'choice':   (2.61, 3.19),   # ~$2.90 ± 10%
+            'select':   (2.20, 2.69),   # ~$2.45 ± 10%
+        },
     },
     'pork': {
         'breeds': [("Berkshire", 0.30), ("Duroc", 0.25), ("Hampshire", 0.15),
@@ -457,8 +463,12 @@ def create_animals(n=200, ref_date=None, prefix="A", quiet=False):
             'sex': sex,
             'frame_score': random.randint(4, 7) if sp == 'cattle' else None,
             'expected_finish_date': (ref + timedelta(days=finish_offset)).isoformat(),
-            'asking_price_per_lb': round(random.uniform(*cfg['price_lb']), 4),
-            'asking_price_head': round(random.uniform(*cfg['price_head']), 2),
+            'asking_price_per_lb': round(random.uniform(
+                *(cfg.get('price_lb_by_grade', {}).get(grade) or cfg['price_lb'])
+            ), 4),
+            'asking_price_head': round(random.uniform(
+                *(cfg.get('price_lb_by_grade', {}).get(grade) or cfg['price_lb'])
+            ) * live_wt, 2),
             'status': 'available',
         }
         animals.append(animal)
@@ -719,6 +729,8 @@ def clean_all():
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM actual_cuts")
+            cur.execute("DELETE FROM invoices WHERE po_number IS NOT NULL")
             cur.execute("DELETE FROM slaughter_order_lines")
             cur.execute("DELETE FROM slaughter_orders")
             cur.execute("DELETE FROM po_lines")
@@ -750,6 +762,8 @@ def main():
                         help='POs per month (default: 9, ~108/year)')
     parser.add_argument('--animal-target', type=int, default=200,
                         help='Target available animal count (default: 200)')
+    parser.add_argument('--species', type=str, default=None,
+                        help='Restrict simulation to a single species (e.g. cattle)')
     args = parser.parse_args()
 
     if args.clean or args.clean_only:
@@ -759,6 +773,12 @@ def main():
 
     # Ensure reference tables seeded
     seed_all()
+
+    # Species filter: override PO generation to single species
+    global SPECIES_OPTS
+    if args.species:
+        sp_filter = args.species.lower()
+        SPECIES_OPTS = [(sp_filter, 1.0)]
 
     print("\nGenerating Michiana region simulation data...\n")
 
@@ -772,12 +792,16 @@ def main():
     create_animals(args.animal_target, ref_date=start_date)
 
     # Monthly loop
+    species_label = args.species.upper() if args.species else "ALL SPECIES"
     print(f"\n{'='*60}")
-    print(f"  MONTHLY SIMULATION — {args.months} months, {args.orders_per_month} POs/month")
+    print(f"  MONTHLY SIMULATION — {args.months} months, {args.orders_per_month} POs/month ({species_label})")
     print(f"{'='*60}\n")
 
     monthly_results = []
-    all_species = ['cattle', 'pork', 'lamb']  # optimizable species
+    if args.species:
+        all_species = [args.species.lower()]
+    else:
+        all_species = ['cattle', 'pork', 'lamb']  # optimizable species
 
     for month_idx in range(args.months):
         month_num = 1 + month_idx % 12

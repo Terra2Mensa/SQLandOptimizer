@@ -94,23 +94,36 @@ SUBPRIMAL_YIELDS = {
 PRIMAL_ORDER = ["Rib", "Chuck", "Loin", "Round", "Brisket", "Plate", "Flank"]
 
 # Processor profiles (kill/fab costs for purchase price calculation)
+# Legacy per-processor keys kept for valuation scripts
 PROCESSORS = {
     "processor_a": {
         "name": "Processor A",
-        "kill_fee": 175.00,           # $/head slaughter fee
-        "fab_cost_per_lb": 0.22,      # $/lb carcass fabrication
-        "shrink_pct": 0.025,          # cooler shrink (2.5%)
-        "payment_terms_days": 30,     # net payment days
+        "kill_fee": 150.00,
+        "fab_cost_per_lb": 0.85,
+        "shrink_pct": 0.025,
+        "payment_terms_days": 30,
     },
     "processor_b": {
         "name": "Processor B",
-        "kill_fee": 200.00,
-        "fab_cost_per_lb": 0.25,
+        "kill_fee": 150.00,
+        "fab_cost_per_lb": 0.85,
         "shrink_pct": 0.030,
         "payment_terms_days": 45,
     },
 }
 DEFAULT_PROCESSOR = "processor_a"
+
+# Species-level default processing rates (2025-26 Michiana-area market rates)
+# Sources: The Cut Processing, Showalter's, Byron Center Meats, Malafy's,
+#          Thomas Farm Meats, Dennison Meat Locker
+# kill_fee = $/head flat, fab_cost_per_lb = $/lb hanging weight
+PROCESSING_RATES = {
+    "cattle":  {"kill_fee": 150.00, "fab_cost_per_lb": 0.85, "shrink_pct": 0.025},
+    "pork":    {"kill_fee":  75.00, "fab_cost_per_lb": 0.80, "shrink_pct": 0.020},
+    "lamb":    {"kill_fee": 100.00, "fab_cost_per_lb": 0.90, "shrink_pct": 0.020},
+    "goat":    {"kill_fee": 100.00, "fab_cost_per_lb": 0.90, "shrink_pct": 0.020},
+    "chicken": {"kill_fee":   5.00, "fab_cost_per_lb": 0.50, "shrink_pct": 0.010},
+}
 
 # ---------------------------------------------------------------------------
 # Demand-side configuration
@@ -179,9 +192,26 @@ FARMER_INVENTORY_STATUSES = ["available", "reserved", "sold", "processing", "com
 PO_STATUSES = ["pending", "planned", "processing", "fulfilled", "cancelled"]
 PO_LINE_STATUSES = ["pending", "partial", "fulfilled", "cancelled"]
 CARCASS_PORTIONS = ["whole", "half", "quarter_front", "quarter_hind"]
-# Primal-to-portion mapping for auto-generating PO lines:
+# Primal-to-portion mapping for auto-generating PO lines (species-specific):
+# Cattle: traditional beef quarter splits
 FRONT_QUARTER_PRIMALS = ["Rib", "Chuck", "Brisket", "Plate"]
 HIND_QUARTER_PRIMALS = ["Loin", "Round", "Flank"]
+
+# Species-specific quarter mappings
+QUARTER_PRIMALS_BY_SPECIES = {
+    'cattle': {
+        'front': ["Rib", "Chuck", "Brisket", "Plate"],
+        'hind':  ["Loin", "Round", "Flank"],
+    },
+    'pork': {
+        'front': ["Butt", "Picnic", "Sparerib", "Jowl"],
+        'hind':  ["Loin", "Ham", "Belly"],
+    },
+    'lamb': {
+        'front': ["Rack", "Shoulder", "Breast/Shank"],
+        'hind':  ["Loin", "Leg"],
+    },
+}
 ANIMAL_SEX_OPTIONS = ["steer", "heifer", "cow", "bull"]
 
 BUYER_TYPES = {
@@ -289,16 +319,16 @@ DEFAULT_PORK_DRESS_PCT = 0.74
 PORK_PROCESSORS = {
     "processor_a": {
         "name": "Processor A",
-        "kill_fee": 45.00,
-        "fab_cost_per_lb": 0.12,
+        "kill_fee": 75.00,
+        "fab_cost_per_lb": 0.80,
         "shrink_pct": 0.020,
         "payment_terms_days": 30,
     },
     "processor_b": {
         "name": "Processor B",
-        "kill_fee": 55.00,
-        "fab_cost_per_lb": 0.14,
-        "shrink_pct": 0.025,
+        "kill_fee": 75.00,
+        "fab_cost_per_lb": 0.80,
+        "shrink_pct": 0.020,
         "payment_terms_days": 45,
     },
 }
@@ -355,8 +385,8 @@ LAMB_SUBPRIMAL_YIELDS = {
 LAMB_PROCESSORS = {
     "processor_a": {
         "name": "Processor A",
-        "kill_fee": 35.00,
-        "fab_cost_per_lb": 0.15,
+        "kill_fee": 100.00,
+        "fab_cost_per_lb": 0.90,
         "shrink_pct": 0.020,
         "payment_terms_days": 30,
     },
