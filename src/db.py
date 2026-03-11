@@ -218,7 +218,9 @@ CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY,
     invoice_id VARCHAR(50) UNIQUE NOT NULL,
     order_id VARCHAR(50) REFERENCES orders(order_id),
-    buyer_id VARCHAR(50) NOT NULL REFERENCES buyers(buyer_id),
+    po_number VARCHAR(50) REFERENCES purchase_orders(po_number),
+    buyer_id VARCHAR(50) REFERENCES buyers(buyer_id),
+    customer_id VARCHAR(50) REFERENCES dtc_customers(customer_id),
     invoice_date DATE NOT NULL DEFAULT CURRENT_DATE,
     due_date DATE NOT NULL,
     total_amount NUMERIC(12,2) NOT NULL,
@@ -477,6 +479,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     total_estimated NUMERIC(12,2),
     total_final NUMERIC(12,2),
     notes TEXT,
+    confirmed_delivery_date DATE,
+    customer_preferences TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -491,6 +495,7 @@ CREATE TABLE IF NOT EXISTS po_lines (
     price_per_lb NUMERIC(8,4) NOT NULL,
     line_total NUMERIC(10,2) NOT NULL,
     fulfilled_lbs NUMERIC(10,1) DEFAULT 0,
+    actual_lbs NUMERIC(10,1),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
 );
 
@@ -586,12 +591,14 @@ CREATE TABLE IF NOT EXISTS slaughter_orders (
     processor_key VARCHAR(50) REFERENCES processors(processor_key),
     optimizer_run_id VARCHAR(50),
     estimated_hanging_weight NUMERIC(10,2),
+    actual_hanging_weight NUMERIC(10,2),
     processing_cost_total NUMERIC(10,2),
     farmer_to_proc_distance NUMERIC(8,2),
     avg_cust_to_proc_distance NUMERIC(8,2),
     pct_allocated_to_orders NUMERIC(5,2),
     pct_to_last_resort NUMERIC(5,2),
     optimizer_score NUMERIC(10,4),
+    completed_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -603,10 +610,25 @@ CREATE TABLE IF NOT EXISTS slaughter_order_lines (
     total_lbs NUMERIC(8,2) NOT NULL,
     allocated_to_po NUMERIC(8,2) DEFAULT 0,
     allocated_to_lor NUMERIC(8,2) DEFAULT 0,
+    actual_lbs NUMERIC(8,2),
+    actual_allocated_to_po NUMERIC(8,2),
+    actual_allocated_to_lor NUMERIC(8,2),
     po_number VARCHAR(50),
     po_line_id INTEGER,
     CONSTRAINT chk_allocation CHECK (allocated_to_po + allocated_to_lor <= total_lbs + 0.01)
 );
+
+CREATE TABLE IF NOT EXISTS actual_cuts (
+    id SERIAL PRIMARY KEY,
+    slaughter_order_id INTEGER NOT NULL REFERENCES slaughter_orders(id),
+    cut_code VARCHAR(30) NOT NULL,
+    actual_lbs NUMERIC(8,2) NOT NULL,
+    recorded_by VARCHAR(50),
+    recorded_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    notes TEXT,
+    UNIQUE (slaughter_order_id, cut_code)
+);
+CREATE INDEX IF NOT EXISTS idx_actual_cuts_so ON actual_cuts(slaughter_order_id);
 
 -- Optimizer indexes
 CREATE INDEX IF NOT EXISTS idx_processors_active ON processors(active) WHERE active = TRUE;
@@ -1429,12 +1451,20 @@ def save_purchase_order(po_number: str, customer_id: str, species: str,
     """
     from config import (SUBPRIMAL_YIELDS, PORK_CUT_YIELDS, LAMB_SUBPRIMAL_YIELDS,
                         CARCASS_PORTIONS, FRONT_QUARTER_PRIMALS, HIND_QUARTER_PRIMALS,
+                        QUARTER_PRIMALS_BY_SPECIES,
                         DEFAULT_LIVE_WEIGHT, DRESS_PCT_BY_YG, DEFAULT_YIELD_GRADE,
                         DEFAULT_PORK_LIVE_WEIGHT, DEFAULT_PORK_DRESS_PCT,
                         DEFAULT_LAMB_LIVE_WEIGHT, DEFAULT_LAMB_DRESS_PCT)
 
     if carcass_portion not in CARCASS_PORTIONS:
         raise ValueError(f"Invalid carcass_portion '{carcass_portion}'. Must be one of: {CARCASS_PORTIONS}")
+
+    # Species-specific portion validation: pork, lamb, goat only allow whole/half
+    if species in ('pork', 'lamb', 'goat') and carcass_portion not in ('whole', 'half'):
+        raise ValueError(
+            f"{species.capitalize()} only supports 'whole' or 'half' portions, "
+            f"got '{carcass_portion}'. Quarter splits are only available for cattle."
+        )
 
     # Select yield table and default carcass weight by species
     if species == 'cattle':
@@ -1456,18 +1486,25 @@ def save_purchase_order(po_number: str, customer_id: str, species: str,
         price_per_lb_override = {}
 
     # Build line items from yield table filtered by portion
+    # Use species-specific quarter mappings when available
+    sp_quarters = QUARTER_PRIMALS_BY_SPECIES.get(species, {})
+    front_primals = sp_quarters.get('front', FRONT_QUARTER_PRIMALS)
+    hind_primals = sp_quarters.get('hind', HIND_QUARTER_PRIMALS)
+
     lines = []
     for cut_code, (desc, yield_pct, primal) in yield_table.items():
         if carcass_portion == 'quarter_front':
-            if primal not in FRONT_QUARTER_PRIMALS:
+            if primal not in front_primals:
                 continue
         elif carcass_portion == 'quarter_hind':
-            if primal not in HIND_QUARTER_PRIMALS:
+            if primal not in hind_primals:
                 continue
 
         qty = carcass_weight * (yield_pct / 100.0)
         if carcass_portion == 'half':
             qty *= 0.5
+        elif carcass_portion in ('quarter_front', 'quarter_hind'):
+            qty *= 0.5  # each quarter = half the primal group yield
 
         ppl = price_per_lb_override.get(cut_code, 0)
         lines.append({
