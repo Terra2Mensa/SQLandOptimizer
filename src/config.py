@@ -1,4 +1,4 @@
-"""Configuration for cattle valuation engine."""
+"""Configuration for Terra Mensa multi-species valuation engine."""
 import os
 from dotenv import load_dotenv
 
@@ -27,9 +27,20 @@ REPORT_IN_AUCTION = 1976       # Indiana Weekly Auction Summary (MARS)
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432")),
-    "dbname": os.getenv("DB_NAME", "cattle_valuation"),
+    "dbname": os.getenv("DB_NAME", "terra_mensa"),
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", ""),
+}
+
+# Supabase (production)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_DB_CONFIG = {
+    "host": os.getenv("SUPABASE_DB_HOST", ""),
+    "port": int(os.getenv("SUPABASE_DB_PORT", "5432")),
+    "dbname": os.getenv("SUPABASE_DB_NAME", "postgres"),
+    "user": os.getenv("SUPABASE_DB_USER", "postgres"),
+    "password": os.getenv("SUPABASE_DB_PASSWORD", ""),
 }
 
 # Default valuation parameters

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Creates the cattle_valuation database and initializes the schema.
+# Creates the terra_mensa database and initializes the schema.
 # Safe to run multiple times — all CREATE statements use IF NOT EXISTS.
 
 set -e
@@ -11,7 +11,7 @@ for pg_dir in /opt/homebrew/opt/postgresql@*/bin /usr/local/opt/postgresql@*/bin
     [ -d "$pg_dir" ] && export PATH="$pg_dir:$PATH" && break
 done
 
-DB_NAME="cattle_valuation"
+DB_NAME="terra_mensa"
 
 # Create database if it doesn't exist
 if psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then

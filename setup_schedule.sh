@@ -9,7 +9,7 @@ PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN_SCRIPT="$PROJ_DIR/run_daily.sh"
 
 if [ "$(uname)" = "Darwin" ]; then
-    PLIST_NAME="com.$(whoami).cattle-valuation"
+    PLIST_NAME="com.$(whoami).terra-mensa"
     PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
     # Unload existing agent if present

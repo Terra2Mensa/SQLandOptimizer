@@ -1,4 +1,4 @@
-"""PostgreSQL persistence layer for cattle valuation data."""
+"""PostgreSQL persistence layer for Terra Mensa valuation data."""
 import json
 from datetime import datetime
 from typing import Optional
@@ -10,7 +10,7 @@ try:
 except ImportError:
     HAS_PSYCOPG2 = False
 
-from config import DB_CONFIG
+from config import DB_CONFIG, SUPABASE_DB_CONFIG
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS usda_subprimal_prices (
@@ -646,6 +646,15 @@ def get_connection():
     if not HAS_PSYCOPG2:
         raise ImportError("psycopg2 not installed. Run: pip3 install psycopg2-binary")
     return psycopg2.connect(**DB_CONFIG)
+
+
+def get_supabase_connection():
+    """Connect to Supabase PostgreSQL (production database)."""
+    if not HAS_PSYCOPG2:
+        raise ImportError("psycopg2 not installed. Run: pip3 install psycopg2-binary")
+    if not SUPABASE_DB_CONFIG.get("host"):
+        raise ValueError("SUPABASE_DB_HOST not configured. Check .env file.")
+    return psycopg2.connect(**SUPABASE_DB_CONFIG)
 
 
 def init_schema():

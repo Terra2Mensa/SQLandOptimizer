@@ -1,5 +1,5 @@
 """
-Shared utility functions for cattle valuation.
+Shared utility functions for Terra Mensa valuation engine.
 """
 
 import base64

@@ -1,4 +1,4 @@
-# Multi-Species Valuation Engine — Setup Guide
+# Terra Mensa — Setup Guide
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ chmod +x setup_db.sh
 ./setup_db.sh
 ```
 
-This creates the `cattle_valuation` database and initializes all tables. Safe to run multiple times.
+This creates the `terra_mensa` database and initializes all tables. Safe to run multiple times.
 
 ### 4. Test a valuation
 

@@ -1,5 +1,5 @@
 -- Migration: Merge valuations + species_valuations into unified valuations table
--- Run: psql cattle_valuation -f migrate_valuations.sql
+-- Run: psql terra_mensa -f migrate_valuations.sql
 
 BEGIN;
 
