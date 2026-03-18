@@ -117,78 +117,14 @@ def print_goat_valuation(v: GoatValuation):
     print(f"{'=' * 75}")
 
 
-def write_goat_excel(valuation, filename=None):
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
-    except ImportError:
-        print("openpyxl not installed — skipping Excel output")
-        return
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Goat Valuation"
-
-    header_fill = PatternFill(start_color="7B4F2E", end_color="7B4F2E", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    currency_fmt = '#,##0.00'
-
-    headers = ["Cut", "Primal", "Yield %", "Weight (lb)", "$/lb", "Value ($)"]
-    for c, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=c, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal='center')
-    ws.column_dimensions['A'].width = 24
-    ws.column_dimensions['B'].width = 12
-    for col in 'CDEF':
-        ws.column_dimensions[col].width = 12
-
-    for r, cut in enumerate(valuation.cut_values, 2):
-        ws.cell(row=r, column=1, value=cut['description'])
-        ws.cell(row=r, column=2, value=cut['primal'])
-        ws.cell(row=r, column=3, value=cut['yield_pct']).number_format = '0.0'
-        ws.cell(row=r, column=4, value=cut['cut_weight_lbs']).number_format = '0.00'
-        ws.cell(row=r, column=5, value=cut['price_per_lb']).number_format = currency_fmt
-        ws.cell(row=r, column=6, value=cut['cut_value']).number_format = currency_fmt
-
-    if filename is None:
-        filename = os.path.join(REPORTS_DIR, f"goat_valuation_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    wb.save(filename)
-    print(f"\nExcel workbook saved to: {filename}")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Goat Valuation Engine")
     parser.add_argument('--live-weight', type=float, default=DEFAULT_GOAT_LIVE_WEIGHT)
     parser.add_argument('--dress-pct', type=float, default=DEFAULT_GOAT_DRESS_PCT)
-    parser.add_argument('--output', type=str, default=None)
-    parser.add_argument('--save-db', action='store_true')
     args = parser.parse_args()
 
     valuation = compute_goat_value(args.live_weight, args.dress_pct)
     print_goat_valuation(valuation)
-    write_goat_excel(valuation, args.output)
-
-    if args.save_db:
-        try:
-            from db import init_schema, save_valuation
-            init_schema()
-            save_valuation('goat', valuation.report_date, {
-                'live_weight': valuation.live_weight,
-                'dressing_pct': valuation.dress_pct,
-                'hot_carcass_weight': valuation.hot_carcass_weight,
-                'total_cut_value': valuation.total_cut_value,
-                'byproduct_value': 0,
-                'gross_value': valuation.total_cut_value,
-                'processing_cost': 0,
-                'net_value': valuation.total_cut_value,
-                'value_per_lb_live': valuation.value_per_lb_live,
-                'cut_detail': valuation.cut_values,
-            })
-            print("\nGoat data saved to PostgreSQL.")
-        except Exception as e:
-            print(f"\nDB save failed: {e}")
 
 
 if __name__ == '__main__':

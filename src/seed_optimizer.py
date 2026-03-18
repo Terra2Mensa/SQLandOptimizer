@@ -228,16 +228,6 @@ def seed_all():
     # Ensure schema is up to date
     init_schema()
 
-    # Run ALTER for dtc_customers geo columns
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("ALTER TABLE dtc_customers ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6)")
-            cur.execute("ALTER TABLE dtc_customers ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6)")
-        conn.commit()
-    finally:
-        conn.close()
-
     all_specs = []
     all_specs.extend(build_beef_specs())
     all_specs.extend(build_pork_specs())

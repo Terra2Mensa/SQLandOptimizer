@@ -19,8 +19,8 @@ from buyers import (
 from demand import (
     aggregate_demand, compute_animals_needed, allocate_carcass,
     print_demand_report, print_allocation_report, print_buyer_list,
-    write_demand_excel, build_income_statement, build_income_statement_with_buyers,
-    print_income_statement, print_income_comparison, write_income_excel,
+    build_income_statement, build_income_statement_with_buyers,
+    print_income_statement, print_income_comparison,
 )
 from cattle_valuation import (
     fetch_boxed_beef, fetch_slaughter_cattle, fetch_premiums_discounts,
@@ -157,12 +157,7 @@ def cmd_demand_report(args):
     print_demand_report(demand_lines, animals, args.grade, args.region)
 
     if args.output:
-        # Minimal allocation for Excel (no purchase price needed for demand-only)
-        allocation = allocate_carcass(
-            active_buyers, usda_prices, ground_prices,
-            valuation, 0.0, args.processor, args.region,
-        )
-        write_demand_excel(demand_lines, animals, allocation, active_buyers, args.output)
+        print(f"  Excel output not yet reimplemented (--output ignored)")
 
 
 def cmd_allocate(args):
@@ -207,7 +202,7 @@ def cmd_allocate(args):
     print_allocation_report(allocation)
 
     if args.output:
-        write_demand_excel(demand_lines, animals, allocation, active_buyers, args.output)
+        print(f"  Excel output not yet reimplemented (--output ignored)")
 
 
 def cmd_buyer_pricing(args):
@@ -289,7 +284,7 @@ def cmd_income(args):
         print_income_comparison(statements)
 
     if args.output:
-        write_income_excel(statements, args.output)
+        print(f"  Excel output not yet reimplemented (--output ignored)")
 
 
 def cmd_edit_buyer(args):

@@ -32,6 +32,9 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", ""),
 }
 
+# Database target: "supabase" (production) or "local" (dev/test)
+DB_TARGET = os.getenv("DB_TARGET", "supabase")
+
 # Supabase (production)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
@@ -41,6 +44,7 @@ SUPABASE_DB_CONFIG = {
     "dbname": os.getenv("SUPABASE_DB_NAME", "postgres"),
     "user": os.getenv("SUPABASE_DB_USER", "postgres"),
     "password": os.getenv("SUPABASE_DB_PASSWORD", ""),
+    "sslmode": "require",
 }
 
 # Default valuation parameters
@@ -192,38 +196,6 @@ GROUND_BEEF_PRODUCTS = {
         "fat_pct": 10,
     },
 }
-
-# Buyer type templates: key cuts, markup ranges, min grade, defaults
-# Order/invoice status workflows
-ORDER_STATUSES = ["pending", "confirmed", "fulfilled", "invoiced", "paid", "cancelled"]
-INVOICE_STATUSES = ["draft", "sent", "partial", "paid", "overdue"]
-
-# D2C + Farmer statuses
-FARMER_INVENTORY_STATUSES = ["available", "reserved", "sold", "processing", "complete"]
-PO_STATUSES = ["pending", "planned", "processing", "fulfilled", "cancelled"]
-PO_LINE_STATUSES = ["pending", "partial", "fulfilled", "cancelled"]
-CARCASS_PORTIONS = ["whole", "half", "quarter_front", "quarter_hind"]
-# Primal-to-portion mapping for auto-generating PO lines (species-specific):
-# Cattle: traditional beef quarter splits
-FRONT_QUARTER_PRIMALS = ["Rib", "Chuck", "Brisket", "Plate"]
-HIND_QUARTER_PRIMALS = ["Loin", "Round", "Flank"]
-
-# Species-specific quarter mappings
-QUARTER_PRIMALS_BY_SPECIES = {
-    'cattle': {
-        'front': ["Rib", "Chuck", "Brisket", "Plate"],
-        'hind':  ["Loin", "Round", "Flank"],
-    },
-    'pork': {
-        'front': ["Butt", "Picnic", "Sparerib", "Jowl"],
-        'hind':  ["Loin", "Ham", "Belly"],
-    },
-    'lamb': {
-        'front': ["Rack", "Shoulder", "Breast/Shank"],
-        'hind':  ["Loin", "Leg"],
-    },
-}
-ANIMAL_SEX_OPTIONS = ["steer", "heifer", "cow", "bull"]
 
 BUYER_TYPES = {
     "fine_dining": {

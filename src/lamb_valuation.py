@@ -366,99 +366,12 @@ def print_lamb_purchase_price(pp: LambPurchasePriceResult):
     print(f"{'=' * 80}")
 
 
-# ---------------------------------------------------------------------------
-# Excel output
-# ---------------------------------------------------------------------------
-
-def write_lamb_excel(valuation, purchase_price, cutout_data, filename=None):
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
-    except ImportError:
-        print("openpyxl not installed — skipping Excel output")
-        return
-
-    wb = Workbook()
-    header_font = Font(bold=True, size=11)
-    header_fill = PatternFill(start_color="548235", end_color="548235", fill_type="solid")
-    header_font_white = Font(bold=True, color="FFFFFF", size=11)
-    currency_fmt = '#,##0.00'
-
-    # --- Sheet 1: Summary ---
-    ws = wb.active
-    ws.title = "Lamb Summary"
-    ws.column_dimensions['A'].width = 28
-    ws.column_dimensions['B'].width = 18
-
-    rows = [
-        ("LAMB CARCASS VALUATION", ""),
-        ("Report Date", valuation.report_date),
-        ("Live Weight (lbs)", valuation.live_weight),
-        ("Dressing %", f"{valuation.dress_pct:.1%}"),
-        ("Hot Carcass Weight (lbs)", valuation.hot_carcass_weight),
-        ("", ""),
-        ("USDA CARCASS VALUES ($/cwt)", ""),
-        ("Gross Carcass", valuation.gross_carcass_price),
-        ("Foresaddle", valuation.foresaddle_price),
-        ("Hindsaddle", valuation.hindsaddle_price),
-        ("Processing Cost", valuation.processing_cost),
-        ("Net Carcass", valuation.net_carcass_price),
-        ("", ""),
-        ("COMPUTED VALUES", ""),
-        ("Total Cut Value ($)", valuation.total_cut_value),
-        ("Value $/cwt Carcass", valuation.value_per_cwt_carcass),
-        ("Value $/cwt Live", valuation.value_per_cwt_live),
-    ]
-
-    for r_idx, (label, val) in enumerate(rows, 1):
-        ws.cell(row=r_idx, column=1, value=label).font = header_font if label.isupper() else Font()
-        cell = ws.cell(row=r_idx, column=2, value=val)
-        if isinstance(val, float):
-            cell.number_format = currency_fmt
-
-    # --- Sheet 2: Cut Detail ---
-    ws2 = wb.create_sheet("Cut Detail")
-    headers = ["IMPS", "Description", "Saddle", "$/cwt", "$/lb",
-               "Yield %", "Weight (lb)", "Value ($)"]
-    for c, h in enumerate(headers, 1):
-        cell = ws2.cell(row=1, column=c, value=h)
-        cell.font = header_font_white
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal='center')
-    ws2.column_dimensions['A'].width = 8
-    ws2.column_dimensions['B'].width = 35
-    ws2.column_dimensions['C'].width = 12
-    for col in 'DEFGH':
-        ws2.column_dimensions[col].width = 12
-
-    for r_idx, cut in enumerate(valuation.cut_values, 2):
-        ws2.cell(row=r_idx, column=1, value=cut['imps_code'])
-        ws2.cell(row=r_idx, column=2, value=cut['description'])
-        ws2.cell(row=r_idx, column=3, value=cut['saddle'])
-        ws2.cell(row=r_idx, column=4, value=cut['fob_price_cwt']).number_format = currency_fmt
-        ws2.cell(row=r_idx, column=5, value=cut['price_per_lb']).number_format = currency_fmt
-        ws2.cell(row=r_idx, column=6, value=cut['yield_pct']).number_format = '0.0'
-        ws2.cell(row=r_idx, column=7, value=cut['cut_weight_lbs']).number_format = '0.0'
-        ws2.cell(row=r_idx, column=8, value=cut['cut_value']).number_format = currency_fmt
-
-    if filename is None:
-        filename = os.path.join(REPORTS_DIR, f"lamb_valuation_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    wb.save(filename)
-    print(f"\nExcel workbook saved to: {filename}")
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(description="Lamb Valuation Engine")
     parser.add_argument('--live-weight', type=float, default=DEFAULT_LAMB_LIVE_WEIGHT,
                         help=f'Live weight in lbs (default: {DEFAULT_LAMB_LIVE_WEIGHT})')
     parser.add_argument('--dress-pct', type=float, default=DEFAULT_LAMB_DRESS_PCT,
                         help=f'Dressing percentage (default: {DEFAULT_LAMB_DRESS_PCT})')
-    parser.add_argument('--output', type=str, default=None,
-                        help='Excel output filename')
     parser.add_argument('--save-db', action='store_true',
                         help='Save results to PostgreSQL')
     args = parser.parse_args()
@@ -476,14 +389,10 @@ def main():
         valuation, processor, args.live_weight)
     print_lamb_purchase_price(purchase_price)
 
-    # Excel output
-    write_lamb_excel(valuation, purchase_price, cutout_data, args.output)
-
     # DB persistence
     if args.save_db:
         try:
-            from db import (init_schema, save_lamb_cutout, save_lamb_summary,
-                            save_valuation)
+            from db import (init_schema, save_lamb_cutout, save_lamb_summary)
             init_schema()
 
             # Save cut-level data
@@ -502,20 +411,6 @@ def main():
                 'hindsaddle': cutout_data['hindsaddle_price'],
                 'net': cutout_data['net_carcass_price'],
                 'processing_cost': cutout_data['processing_cost'],
-            })
-
-            # Save valuation
-            save_valuation('lamb', cutout_data['report_date'], {
-                'live_weight': valuation.live_weight,
-                'dressing_pct': valuation.dress_pct,
-                'hot_carcass_weight': valuation.hot_carcass_weight,
-                'total_cut_value': valuation.total_cut_value,
-                'byproduct_value': 0,
-                'gross_value': valuation.total_cut_value,
-                'processing_cost': valuation.processing_cost,
-                'net_value': valuation.total_cut_value - valuation.processing_cost,
-                'value_per_lb_live': valuation.value_per_cwt_live / 100,
-                'cut_detail': valuation.cut_values,
             })
 
             print("\nLamb data saved to PostgreSQL.")

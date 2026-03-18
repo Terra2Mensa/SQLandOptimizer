@@ -371,127 +371,10 @@ def print_pork_purchase_price(pp: PorkPurchasePriceResult):
 
 
 # ---------------------------------------------------------------------------
-# Excel output
-# ---------------------------------------------------------------------------
-
-def write_pork_excel(valuation, purchase_price, cutout_data, live_data,
-                     filename=None):
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    except ImportError:
-        print("openpyxl not installed — skipping Excel output")
-        return
-
-    wb = Workbook()
-    header_font = Font(bold=True, size=11)
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    header_font_white = Font(bold=True, color="FFFFFF", size=11)
-    currency_fmt = '#,##0.00'
-    thin_border = Border(
-        left=Side(style='thin'), right=Side(style='thin'),
-        top=Side(style='thin'), bottom=Side(style='thin')
-    )
-
-    # --- Sheet 1: Summary ---
-    ws = wb.active
-    ws.title = "Pork Summary"
-    ws.column_dimensions['A'].width = 28
-    ws.column_dimensions['B'].width = 18
-
-    rows = [
-        ("PORK CARCASS VALUATION", ""),
-        ("Report Date", valuation.report_date),
-        ("Live Weight (lbs)", valuation.live_weight),
-        ("Dressing %", f"{valuation.dress_pct:.1%}"),
-        ("Hot Carcass Weight (lbs)", valuation.hot_carcass_weight),
-        ("", ""),
-        ("PRIMAL CUTOUT VALUES ($/cwt)", ""),
-        ("Carcass Composite", valuation.primal_values.get('carcass', 0)),
-        ("Loin", valuation.primal_values.get('loin', 0)),
-        ("Butt", valuation.primal_values.get('butt', 0)),
-        ("Picnic", valuation.primal_values.get('picnic', 0)),
-        ("Rib", valuation.primal_values.get('rib', 0)),
-        ("Ham", valuation.primal_values.get('ham', 0)),
-        ("Belly", valuation.primal_values.get('belly', 0)),
-        ("", ""),
-        ("CARCASS VALUE", ""),
-        ("Total Carcass Value ($)", valuation.total_cut_value),
-        ("Value $/cwt Live", valuation.value_per_cwt_live),
-    ]
-
-    for r_idx, (label, val) in enumerate(rows, 1):
-        ws.cell(row=r_idx, column=1, value=label).font = header_font if label.isupper() else Font()
-        cell = ws.cell(row=r_idx, column=2, value=val)
-        if isinstance(val, float):
-            cell.number_format = currency_fmt
-
-    # --- Sheet 2: Cut Detail ---
-    ws2 = wb.create_sheet("Cut Detail")
-    headers = ["Primal", "Description", "$/cwt", "$/lb", "Low", "High", "Volume (lbs)"]
-    for c, h in enumerate(headers, 1):
-        cell = ws2.cell(row=1, column=c, value=h)
-        cell.font = header_font_white
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal='center')
-    ws2.column_dimensions['A'].width = 12
-    ws2.column_dimensions['B'].width = 40
-    for col in 'CDEFG':
-        ws2.column_dimensions[col].width = 14
-
-    row = 2
-    for cut in sorted(valuation.cut_values, key=lambda x: (
-            PORK_PRIMAL_ORDER.index(x['section']) if x['section'] in PORK_PRIMAL_ORDER else 99,
-            -x['price_cwt'])):
-        ws2.cell(row=row, column=1, value=cut['section'])
-        ws2.cell(row=row, column=2, value=cut['description'])
-        ws2.cell(row=row, column=3, value=cut['price_cwt']).number_format = currency_fmt
-        ws2.cell(row=row, column=4, value=cut['price_per_lb']).number_format = currency_fmt
-        ws2.cell(row=row, column=5, value=cut['price_low']).number_format = currency_fmt
-        ws2.cell(row=row, column=6, value=cut['price_high']).number_format = currency_fmt
-        ws2.cell(row=row, column=7, value=cut['total_pounds']).number_format = '#,##0'
-        row += 1
-
-    # --- Sheet 3: Purchase Price ---
-    ws3 = wb.create_sheet("Purchase Price")
-    ws3.column_dimensions['A'].width = 35
-    ws3.column_dimensions['B'].width = 15
-    ws3.column_dimensions['C'].width = 15
-
-    pp = purchase_price
-    pp_rows = [
-        ("PURCHASE PRICE ANALYSIS", "", ""),
-        ("Processor", pp.processor_name, ""),
-        ("Kill Fee", pp.processor_costs['kill_fee'], ""),
-        ("Fab Cost $/lb", pp.processor_costs['fab_cost_per_lb'], ""),
-        ("Shrink %", f"{pp.processor_costs['shrink_pct']:.1%}", ""),
-        ("", "", ""),
-        ("Method", "$/cwt Live", "$/head"),
-        ("Negotiated Live Basis", pp.live_basis_cwt,
-         pp.live_basis_cwt / 100 * pp.live_weight if pp.live_basis_cwt > 0 else 0),
-        ("Carcass Basis (-> live)", pp.carcass_basis_cwt,
-         pp.carcass_basis_cwt / 100 * pp.live_weight if pp.carcass_basis_cwt > 0 else 0),
-        ("Cutout-Minus-Margin", pp.cutout_minus_margin_cwt,
-         pp.cutout_minus_margin_cwt / 100 * pp.live_weight if pp.cutout_minus_margin_cwt > 0 else 0),
-    ]
-    for r_idx, (a, b, c) in enumerate(pp_rows, 1):
-        ws3.cell(row=r_idx, column=1, value=a)
-        cell_b = ws3.cell(row=r_idx, column=2, value=b)
-        cell_c = ws3.cell(row=r_idx, column=3, value=c)
-        if isinstance(b, float):
-            cell_b.number_format = currency_fmt
-        if isinstance(c, float):
-            cell_c.number_format = currency_fmt
-
-    if filename is None:
-        filename = os.path.join(REPORTS_DIR, f"pork_valuation_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    wb.save(filename)
-    print(f"\nExcel workbook saved to: {filename}")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# (Excel report generation removed)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Pork Valuation Engine")
@@ -499,8 +382,6 @@ def main():
                         help=f'Live weight in lbs (default: {DEFAULT_PORK_LIVE_WEIGHT})')
     parser.add_argument('--dress-pct', type=float, default=DEFAULT_PORK_DRESS_PCT,
                         help=f'Dressing percentage (default: {DEFAULT_PORK_DRESS_PCT})')
-    parser.add_argument('--output', type=str, default=None,
-                        help='Excel output filename')
     parser.add_argument('--save-db', action='store_true',
                         help='Save results to PostgreSQL')
     parser.add_argument('--no-live', action='store_true',
@@ -523,15 +404,11 @@ def main():
             valuation, live_data, processor, args.live_weight)
         print_pork_purchase_price(purchase_price)
 
-    # Excel output
-    write_pork_excel(valuation, purchase_price, cutout_data, live_data,
-                     args.output)
-
     # DB persistence
     if args.save_db:
         try:
             from db import (init_schema, save_pork_cutout, save_pork_primals,
-                            save_pork_live, save_valuation)
+                            save_pork_live)
             init_schema()
 
             # Save cut-level data
@@ -552,20 +429,6 @@ def main():
             if live_data and live_data.get('rows'):
                 save_pork_live(live_data['report_date'], REPORT_PORK_LIVE,
                                live_data['rows'])
-
-            # Save valuation
-            save_valuation('pork', cutout_data['report_date'], {
-                'live_weight': valuation.live_weight,
-                'dressing_pct': valuation.dress_pct,
-                'hot_carcass_weight': valuation.hot_carcass_weight,
-                'total_cut_value': valuation.total_cut_value,
-                'byproduct_value': 0,
-                'gross_value': valuation.total_cut_value,
-                'processing_cost': 0,
-                'net_value': valuation.net_value,
-                'value_per_lb_live': valuation.value_per_cwt_live / 100,
-                'cut_detail': valuation.cut_values,
-            })
 
             print("\nPork data saved to PostgreSQL.")
         except Exception as e:
