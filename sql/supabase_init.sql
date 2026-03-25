@@ -1,426 +1,363 @@
 -- =============================================================================
--- Terra Mensa — Supabase initialization script
--- Two-schema layout: public (website + REST API) / engine (Python backend only)
+-- Terra Mensa — Supabase schema
+-- Single source of truth for both website and backend.
 -- Run: psql "$SUPA_CONN" -f sql/supabase_init.sql
 -- =============================================================================
 
--- ---------------------------------------------------------------------------
--- Schema setup
--- ---------------------------------------------------------------------------
-CREATE SCHEMA IF NOT EXISTS engine;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- ---------------------------------------------------------------------------
--- PUBLIC schema — Website reads/writes via REST + RLS
--- ---------------------------------------------------------------------------
+-- ─── Profiles (unified: farmer, customer, processor) ─────────────────────
 
--- Unified profiles (replaces farmers, dtc_customers, processors)
 CREATE TABLE IF NOT EXISTS public.profiles (
-    profile_id VARCHAR(50) PRIMARY KEY,
-    type VARCHAR(20) NOT NULL,  -- farmer, customer, processor
-    first VARCHAR(50),
-    last VARCHAR(50),
-    email VARCHAR(100),
-    phone VARCHAR(30),
-    address TEXT,
-    latitude NUMERIC(9,6),
-    longitude NUMERIC(9,6),
-    company_name VARCHAR(150),
-    active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type            TEXT NOT NULL CHECK (type IN ('farmer','customer','processor')),
+    first_name      TEXT,
+    last_name       TEXT,
+    email           TEXT UNIQUE,
+    phone           TEXT,
+    address         TEXT,
+    latitude        NUMERIC(9,6),
+    longitude       NUMERIC(9,6),
+    company_name    TEXT,
+    active          BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_profiles_type ON public.profiles(type);
-CREATE INDEX IF NOT EXISTS idx_profiles_active ON public.profiles(active) WHERE active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);
 
--- Farmer inventory (simplified)
+-- ─── Farmer inventory ────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS public.farmer_inventory (
-    animal_id VARCHAR(50) PRIMARY KEY,
-    profile_id VARCHAR(50) NOT NULL REFERENCES public.profiles(profile_id),
-    species VARCHAR(20) NOT NULL,
-    live_weight_est NUMERIC(10,1),
-    expected_grade VARCHAR(20),
-    expected_finish_date DATE,
-    active BOOLEAN DEFAULT TRUE,
-    status VARCHAR(20) NOT NULL DEFAULT 'available',
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id              UUID NOT NULL REFERENCES public.profiles(id),
+    species                 TEXT NOT NULL CHECK (species IN ('cattle','pork','lamb','goat','chicken')),
+    live_weight_est         NUMERIC(10,1),
+    expected_grade          TEXT,
+    expected_finish_date    DATE,
+    active                  BOOLEAN DEFAULT TRUE,
+    status                  TEXT NOT NULL DEFAULT 'available'
+                            CHECK (status IN ('available','reserved','processing','complete')),
+    created_at              TIMESTAMPTZ DEFAULT now(),
+    updated_at              TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_inventory_profile ON public.farmer_inventory(profile_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_species_status ON public.farmer_inventory(species, status);
 
--- Purchase orders (share-based)
+-- ─── Purchase orders (share-based) ──────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS public.purchase_orders (
-    po_number VARCHAR(50) PRIMARY KEY,
-    profile_id VARCHAR(50) NOT NULL REFERENCES public.profiles(profile_id),
-    species VARCHAR(20) NOT NULL,
-    share VARCHAR(20) NOT NULL,  -- whole, half, quarter, eighth
-    note TEXT,
-    order_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    deposit NUMERIC(10,2) DEFAULT 0,
-    customer_preferences TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    po_number       VARCHAR(50) PRIMARY KEY,
+    profile_id      UUID NOT NULL REFERENCES public.profiles(id),
+    species         TEXT NOT NULL,
+    share           TEXT NOT NULL CHECK (share IN ('whole','half','quarter','eighth')),
+    note            TEXT,
+    order_date      TIMESTAMPTZ DEFAULT now(),
+    deposit         NUMERIC(10,2) DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','confirmed','processing','ready','complete','cancelled')),
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_po_profile ON public.purchase_orders(profile_id);
 CREATE INDEX IF NOT EXISTS idx_po_status ON public.purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_po_species_status ON public.purchase_orders(species, status);
 
--- PO cut instructions (structured cut preferences per PO)
-CREATE TABLE IF NOT EXISTS public.po_cut_instructions (
-    id SERIAL PRIMARY KEY,
-    po_number VARCHAR(50) NOT NULL REFERENCES public.purchase_orders(po_number) ON DELETE CASCADE,
-    cut_code VARCHAR(30) NOT NULL,
-    instruction VARCHAR(100),
-    quantity VARCHAR(50)
-);
+-- ─── Processor costs (per species, effective-date versioned) ────────────
 
-CREATE INDEX IF NOT EXISTS idx_po_cut_instructions_po ON public.po_cut_instructions(po_number);
-
--- Cut specifications (kept as-is)
-CREATE TABLE IF NOT EXISTS public.config_cut_specs (
-    id SERIAL PRIMARY KEY,
-    species VARCHAR(20) NOT NULL,
-    primal_code VARCHAR(30) NOT NULL,
-    primal_name VARCHAR(80) NOT NULL,
-    cut_code VARCHAR(30) NOT NULL,
-    cut_name VARCHAR(100) NOT NULL,
-    yield_pct NUMERIC(5,2) NOT NULL,
-    min_grade VARCHAR(20),
-    is_premium BOOLEAN DEFAULT FALSE,
-    notes TEXT,
-    UNIQUE (species, cut_code)
-);
-
-CREATE INDEX IF NOT EXISTS idx_cut_specs_species ON public.config_cut_specs(species);
-CREATE INDEX IF NOT EXISTS idx_cut_specs_cut ON public.config_cut_specs(cut_code);
-
--- Slaughter orders (simplified)
-CREATE TABLE IF NOT EXISTS public.slaughter_orders (
-    order_number VARCHAR(50) PRIMARY KEY,
-    animal_id VARCHAR(50) REFERENCES public.farmer_inventory(animal_id),
-    profile_id VARCHAR(50) REFERENCES public.profiles(profile_id),  -- processor
-    species VARCHAR(20) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'planned',
-    actual_hanging_weight NUMERIC(10,2),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_slaughter_status ON public.slaughter_orders(status);
-CREATE INDEX IF NOT EXISTS idx_slaughter_animal ON public.slaughter_orders(animal_id);
-
--- Slaughter order allocations (per-PO share tracking)
-CREATE TABLE IF NOT EXISTS public.slaughter_order_allocations (
-    id SERIAL PRIMARY KEY,
-    slaughter_order_number VARCHAR(50) NOT NULL REFERENCES public.slaughter_orders(order_number) ON DELETE CASCADE,
-    po_number VARCHAR(50) NOT NULL REFERENCES public.purchase_orders(po_number),
-    share VARCHAR(20) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_so_alloc_order ON public.slaughter_order_allocations(slaughter_order_number);
-CREATE INDEX IF NOT EXISTS idx_so_alloc_po ON public.slaughter_order_allocations(po_number);
-
--- Processor costs (replaces config_processors + config_processor_capabilities)
 CREATE TABLE IF NOT EXISTS public.processor_costs (
-    id SERIAL PRIMARY KEY,
-    profile_id VARCHAR(50) NOT NULL REFERENCES public.profiles(profile_id),
-    species VARCHAR(20) NOT NULL,
-    kill_fee NUMERIC(10,2) NOT NULL,
+    id              SERIAL PRIMARY KEY,
+    profile_id      UUID NOT NULL REFERENCES public.profiles(id),
+    species         TEXT NOT NULL,
+    kill_fee        NUMERIC(10,2) NOT NULL,
     fab_cost_per_lb NUMERIC(10,4) NOT NULL,
-    shrink_pct NUMERIC(6,4) NOT NULL,
+    shrink_pct      NUMERIC(6,4) NOT NULL,
     daily_capacity_head INTEGER,
-    effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    effective_date  DATE NOT NULL DEFAULT CURRENT_DATE,
     UNIQUE (profile_id, species, effective_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_processor_costs_lookup
     ON public.processor_costs(profile_id, species, effective_date DESC);
 
--- Weekly pricing (per species + grade, effective-date versioned)
+-- ─── Weekly pricing (per species + grade, effective-date versioned) ─────
+
 CREATE TABLE IF NOT EXISTS public.weekly_pricing (
-    id SERIAL PRIMARY KEY,
-    species VARCHAR(20) NOT NULL,
-    grade VARCHAR(20) NOT NULL,
-    price_per_lb NUMERIC(10,4) NOT NULL,
-    effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    id              SERIAL PRIMARY KEY,
+    species         TEXT NOT NULL,
+    grade           TEXT NOT NULL,
+    price_per_lb    NUMERIC(10,4) NOT NULL,
+    effective_date  DATE NOT NULL DEFAULT CURRENT_DATE,
     UNIQUE (species, grade, effective_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_weekly_pricing_lookup
     ON public.weekly_pricing(species, grade, effective_date DESC);
 
--- Share adjustments (premium/discount by share size)
+-- ─── Share adjustments (premium/discount by share size) ─────────────────
+
 CREATE TABLE IF NOT EXISTS public.share_adjustments (
-    id SERIAL PRIMARY KEY,
-    share VARCHAR(20) NOT NULL,
-    adjustment_pct NUMERIC(6,4) NOT NULL DEFAULT 0,
-    effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    id              SERIAL PRIMARY KEY,
+    share           TEXT NOT NULL,
+    adjustment_pct  NUMERIC(6,4) NOT NULL DEFAULT 0,
+    effective_date  DATE NOT NULL DEFAULT CURRENT_DATE,
     UNIQUE (share, effective_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_share_adjustments_lookup
     ON public.share_adjustments(share, effective_date DESC);
 
--- ---------------------------------------------------------------------------
--- ENGINE schema — Python backend only, invisible to REST API
--- ---------------------------------------------------------------------------
+-- ─── Contact requests (website form) ────────────────────────────────────
 
--- USDA cattle prices
-CREATE TABLE IF NOT EXISTS engine.usda_subprimal_prices (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    report_id INTEGER NOT NULL,
-    grade VARCHAR(20) NOT NULL,
-    imps_code VARCHAR(10) NOT NULL,
-    item_description TEXT,
-    weighted_avg_cwt NUMERIC(10,2),
-    price_range_low NUMERIC(10,2),
-    price_range_high NUMERIC(10,2),
-    number_trades INTEGER,
-    total_pounds BIGINT
+CREATE TABLE IF NOT EXISTS public.contact_requests (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    role_interest TEXT,
+    subject     TEXT,
+    message     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'new',
+    created_at  TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_subprimal_report_date ON engine.usda_subprimal_prices(report_date, grade);
-CREATE INDEX IF NOT EXISTS idx_subprimal_imps ON engine.usda_subprimal_prices(imps_code, report_date);
+-- ─── Cut sheet configs (UI form config, one row per species) ────────────
 
-CREATE TABLE IF NOT EXISTS engine.usda_composites (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    primal VARCHAR(30),
-    choice_cwt NUMERIC(10,2),
-    select_cwt NUMERIC(10,2)
+CREATE TABLE IF NOT EXISTS public.cut_sheet_configs (
+    species     TEXT PRIMARY KEY,
+    config      JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS engine.slaughter_cattle_prices (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    report_id INTEGER NOT NULL,
-    source VARCHAR(50),
-    class_description VARCHAR(50),
-    selling_basis VARCHAR(30),
-    grade_description VARCHAR(30),
-    head_count INTEGER,
-    avg_weight NUMERIC(10,1),
-    price_range_low NUMERIC(10,2),
-    price_range_high NUMERIC(10,2),
-    weighted_avg_price NUMERIC(10,2)
-);
+-- ─── Cut sheet templates (named presets for auto-fill) ──────────────────
 
-CREATE INDEX IF NOT EXISTS idx_slaughter_report_date ON engine.slaughter_cattle_prices(report_date);
-
-CREATE TABLE IF NOT EXISTS engine.premiums_discounts (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    type VARCHAR(20),
-    class_description VARCHAR(40),
-    avg_price NUMERIC(10,2),
-    price_range_low NUMERIC(10,2),
-    price_range_high NUMERIC(10,2),
-    price_change NUMERIC(10,2)
-);
-
-CREATE TABLE IF NOT EXISTS engine.indiana_auction (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    commodity VARCHAR(40),
-    class VARCHAR(40),
-    quality_grade VARCHAR(30),
-    frame VARCHAR(20),
-    dressing VARCHAR(10),
-    yield_grade VARCHAR(10),
-    head_count INTEGER,
-    avg_weight NUMERIC(10,1),
-    avg_price_min NUMERIC(10,2),
-    avg_price_max NUMERIC(10,2),
-    avg_price NUMERIC(10,2),
-    receipts INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_auction_report_date ON engine.indiana_auction(report_date);
-
--- Pork market data
-CREATE TABLE IF NOT EXISTS engine.pork_cutout_prices (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    report_id INTEGER NOT NULL,
-    section VARCHAR(30) NOT NULL,
-    item_description TEXT NOT NULL,
-    weighted_average NUMERIC(10,2),
-    price_range_low NUMERIC(10,2),
-    price_range_high NUMERIC(10,2),
-    total_pounds BIGINT
-);
-
-CREATE INDEX IF NOT EXISTS idx_pork_cutout_date ON engine.pork_cutout_prices(report_date);
-
-CREATE TABLE IF NOT EXISTS engine.pork_primal_values (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    pork_carcass NUMERIC(10,2),
-    pork_loin NUMERIC(10,2),
-    pork_butt NUMERIC(10,2),
-    pork_picnic NUMERIC(10,2),
-    pork_rib NUMERIC(10,2),
-    pork_ham NUMERIC(10,2),
-    pork_belly NUMERIC(10,2)
-);
-
-CREATE INDEX IF NOT EXISTS idx_pork_primal_date ON engine.pork_primal_values(report_date);
-
-CREATE TABLE IF NOT EXISTS engine.pork_live_prices (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    report_id INTEGER NOT NULL,
-    purchase_type VARCHAR(50),
-    head_count INTEGER,
-    avg_weight NUMERIC(10,1),
-    price_range_low NUMERIC(10,2),
-    price_range_high NUMERIC(10,2),
-    weighted_avg_price NUMERIC(10,2),
-    carcass_basis NUMERIC(10,2)
-);
-
-CREATE INDEX IF NOT EXISTS idx_pork_live_date ON engine.pork_live_prices(report_date);
-
--- Lamb market data
-CREATE TABLE IF NOT EXISTS engine.lamb_cutout_prices (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    report_id INTEGER NOT NULL,
-    imps_code VARCHAR(10),
-    imps_description TEXT,
-    fob_price NUMERIC(10,4),
-    percentage_carcass NUMERIC(6,2),
-    cut_weight NUMERIC(10,4),
-    saddle VARCHAR(20)
-);
-
-CREATE INDEX IF NOT EXISTS idx_lamb_cutout_date ON engine.lamb_cutout_prices(report_date);
-
-CREATE TABLE IF NOT EXISTS engine.lamb_carcass_summary (
-    id SERIAL PRIMARY KEY,
-    fetch_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    report_date DATE NOT NULL,
-    gross_carcass_price NUMERIC(10,4),
-    foresaddle_price NUMERIC(10,4),
-    hindsaddle_price NUMERIC(10,4),
-    net_carcass_price NUMERIC(10,4),
-    processing_cost NUMERIC(10,2)
-);
-
-CREATE INDEX IF NOT EXISTS idx_lamb_summary_date ON engine.lamb_carcass_summary(report_date);
-
--- Manual species prices (chicken, goat)
-CREATE TABLE IF NOT EXISTS engine.manual_species_prices (
-    id SERIAL PRIMARY KEY,
-    entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    species VARCHAR(20) NOT NULL,
-    cut_code VARCHAR(30) NOT NULL,
+CREATE TABLE IF NOT EXISTS public.cut_sheet_templates (
+    id          SERIAL PRIMARY KEY,
+    species     TEXT NOT NULL REFERENCES public.cut_sheet_configs(species),
+    share_size  TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    label       TEXT NOT NULL,
     description TEXT,
-    price_per_lb NUMERIC(10,4) NOT NULL,
-    yield_pct NUMERIC(6,2),
-    source VARCHAR(50) DEFAULT 'manual',
-    UNIQUE (species, cut_code, entry_date)
+    selections  JSONB NOT NULL,
+    sort_order  INT DEFAULT 0,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (species, share_size, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_manual_species ON engine.manual_species_prices(species, entry_date);
+-- ─── Cut sheet tables (per-species customer selections) ─────────────────
 
--- Grade hierarchy (kept as-is)
-CREATE TABLE IF NOT EXISTS engine.config_grade_hierarchy (
-    id SERIAL PRIMARY KEY,
-    species VARCHAR(20) NOT NULL,
-    grade_code VARCHAR(20) NOT NULL,
-    grade_name VARCHAR(50) NOT NULL,
-    rank_order INTEGER NOT NULL,
-    UNIQUE (species, grade_code)
+CREATE TABLE IF NOT EXISTS public.beef_cut_sheets (
+    id          SERIAL PRIMARY KEY,
+    po_number   VARCHAR(50) REFERENCES public.purchase_orders(po_number),
+    half_label  TEXT NOT NULL CHECK (half_label IN ('A','B')),
+    selections  JSONB NOT NULL DEFAULT '{}',
+    notes       TEXT,
+    share_size  TEXT NOT NULL DEFAULT '1/2'
+                CHECK (share_size IN ('1/2','1/4','1/8')),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (po_number, half_label)
 );
 
-CREATE INDEX IF NOT EXISTS idx_grade_hierarchy_species ON engine.config_grade_hierarchy(species);
+CREATE INDEX IF NOT EXISTS idx_beef_cut_sheets_po ON public.beef_cut_sheets(po_number);
 
+CREATE TABLE IF NOT EXISTS public.pork_cut_sheets (
+    id          SERIAL PRIMARY KEY,
+    po_number   VARCHAR(50) REFERENCES public.purchase_orders(po_number),
+    half_label  TEXT NOT NULL CHECK (half_label IN ('A','B')),
+    selections  JSONB NOT NULL DEFAULT '{}',
+    notes       TEXT,
+    share_size  TEXT NOT NULL DEFAULT '1/1'
+                CHECK (share_size IN ('1/1','1/2','1/4')),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (po_number, half_label)
+);
 
--- ---------------------------------------------------------------------------
--- Row-Level Security
--- ---------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_pork_cut_sheets_po ON public.pork_cut_sheets(po_number);
+
+CREATE TABLE IF NOT EXISTS public.lamb_cut_sheets (
+    id          SERIAL PRIMARY KEY,
+    po_number   VARCHAR(50) REFERENCES public.purchase_orders(po_number),
+    half_label  TEXT NOT NULL CHECK (half_label IN ('A','B')),
+    selections  JSONB NOT NULL DEFAULT '{}',
+    notes       TEXT,
+    share_size  TEXT NOT NULL DEFAULT '1/1'
+                CHECK (share_size IN ('1/1','1/2')),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (po_number, half_label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lamb_cut_sheets_po ON public.lamb_cut_sheets(po_number);
+
+CREATE TABLE IF NOT EXISTS public.goat_cut_sheets (
+    id          SERIAL PRIMARY KEY,
+    po_number   VARCHAR(50) REFERENCES public.purchase_orders(po_number),
+    half_label  TEXT NOT NULL CHECK (half_label IN ('A','B')),
+    selections  JSONB NOT NULL DEFAULT '{}',
+    notes       TEXT,
+    share_size  TEXT NOT NULL DEFAULT '1/1'
+                CHECK (share_size IN ('1/1','1/2')),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (po_number, half_label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goat_cut_sheets_po ON public.goat_cut_sheets(po_number);
+
+-- ─── Row-Level Security ─────────────────────────────────────────────────
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.farmer_inventory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.po_cut_instructions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.config_cut_specs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.slaughter_orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.slaughter_order_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.processor_costs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.weekly_pricing ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.share_adjustments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contact_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cut_sheet_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cut_sheet_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.beef_cut_sheets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pork_cut_sheets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lamb_cut_sheets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.goat_cut_sheets ENABLE ROW LEVEL SECURITY;
 
--- Profiles: anyone reads, owner writes
-CREATE POLICY profiles_select ON public.profiles FOR SELECT USING (true);
-CREATE POLICY profiles_insert ON public.profiles FOR INSERT
-    WITH CHECK (auth.uid()::text = profile_id);
-CREATE POLICY profiles_update ON public.profiles FOR UPDATE
-    USING (auth.uid()::text = profile_id);
+-- ─── RLS Policies ───────────────────────────────────────────────────────
 
--- Farmer inventory: anyone reads, farm owner writes
-CREATE POLICY inventory_select ON public.farmer_inventory FOR SELECT USING (true);
-CREATE POLICY inventory_insert ON public.farmer_inventory FOR INSERT
-    WITH CHECK (profile_id IN (SELECT profile_id FROM public.profiles WHERE profile_id = auth.uid()::text AND type = 'farmer'));
-CREATE POLICY inventory_update ON public.farmer_inventory FOR UPDATE
-    USING (profile_id IN (SELECT profile_id FROM public.profiles WHERE profile_id = auth.uid()::text AND type = 'farmer'));
-CREATE POLICY inventory_delete ON public.farmer_inventory FOR DELETE
-    USING (profile_id IN (SELECT profile_id FROM public.profiles WHERE profile_id = auth.uid()::text AND type = 'farmer'));
+-- Helper: get current user's app role from JWT metadata
+CREATE OR REPLACE FUNCTION public.current_app_role()
+RETURNS TEXT LANGUAGE SQL STABLE AS $$
+  SELECT coalesce(auth.jwt() -> 'user_metadata' ->> 'role', 'customer');
+$$;
 
--- Purchase orders: customers create/read own
-CREATE POLICY po_select ON public.purchase_orders FOR SELECT
-    USING (auth.uid()::text = profile_id);
-CREATE POLICY po_insert ON public.purchase_orders FOR INSERT
-    WITH CHECK (auth.uid()::text = profile_id);
-CREATE POLICY po_update ON public.purchase_orders FOR UPDATE
-    USING (auth.uid()::text = profile_id);
+-- Profiles: read all, write own
+CREATE POLICY IF NOT EXISTS profiles_read ON public.profiles
+    FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY IF NOT EXISTS profiles_insert_own ON public.profiles
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
+CREATE POLICY IF NOT EXISTS profiles_update_own ON public.profiles
+    FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
--- PO cut instructions: customers read own PO's instructions
-CREATE POLICY po_instructions_select ON public.po_cut_instructions FOR SELECT
-    USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()::text));
-CREATE POLICY po_instructions_insert ON public.po_cut_instructions FOR INSERT
-    WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()::text));
+-- Farmer inventory: public read, farm owner writes
+CREATE POLICY IF NOT EXISTS inventory_read ON public.farmer_inventory
+    FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY IF NOT EXISTS inventory_write ON public.farmer_inventory
+    FOR INSERT TO authenticated
+    WITH CHECK (profile_id = auth.uid() AND EXISTS (
+        SELECT 1 FROM public.profiles WHERE id = auth.uid() AND type = 'farmer'
+    ));
+CREATE POLICY IF NOT EXISTS inventory_update ON public.farmer_inventory
+    FOR UPDATE TO authenticated
+    USING (profile_id = auth.uid());
+CREATE POLICY IF NOT EXISTS inventory_delete ON public.farmer_inventory
+    FOR DELETE TO authenticated
+    USING (profile_id = auth.uid());
 
--- Config tables: anyone reads, no client writes
-CREATE POLICY config_cut_specs_select ON public.config_cut_specs FOR SELECT USING (true);
+-- Purchase orders: customer creates/reads own, admin reads all
+CREATE POLICY IF NOT EXISTS po_read_own ON public.purchase_orders
+    FOR SELECT TO authenticated USING (profile_id = auth.uid());
+CREATE POLICY IF NOT EXISTS po_read_admin ON public.purchase_orders
+    FOR SELECT TO authenticated USING (public.current_app_role() = 'admin');
+CREATE POLICY IF NOT EXISTS po_insert_own ON public.purchase_orders
+    FOR INSERT TO authenticated WITH CHECK (profile_id = auth.uid());
+CREATE POLICY IF NOT EXISTS po_update_own ON public.purchase_orders
+    FOR UPDATE TO authenticated USING (profile_id = auth.uid());
 
--- Slaughter orders: read-only for authenticated users
-CREATE POLICY slaughter_orders_select ON public.slaughter_orders FOR SELECT
-    USING (auth.role() = 'authenticated');
-CREATE POLICY so_allocations_select ON public.slaughter_order_allocations FOR SELECT
-    USING (slaughter_order_number IN (SELECT order_number FROM public.slaughter_orders));
+-- Processor costs: public read
+CREATE POLICY IF NOT EXISTS processor_costs_read ON public.processor_costs
+    FOR SELECT TO anon, authenticated USING (true);
 
--- Processor costs: anyone reads
-CREATE POLICY processor_costs_select ON public.processor_costs FOR SELECT USING (true);
+-- Weekly pricing: public read
+CREATE POLICY IF NOT EXISTS weekly_pricing_read ON public.weekly_pricing
+    FOR SELECT TO anon, authenticated USING (true);
 
+-- Share adjustments: public read
+CREATE POLICY IF NOT EXISTS share_adjustments_read ON public.share_adjustments
+    FOR SELECT TO anon, authenticated USING (true);
 
--- ---------------------------------------------------------------------------
--- Grants
--- ---------------------------------------------------------------------------
+-- Contact requests: anyone inserts, admin reads
+CREATE POLICY IF NOT EXISTS contact_insert ON public.contact_requests
+    FOR INSERT TO anon, authenticated WITH CHECK (true);
+CREATE POLICY IF NOT EXISTS contact_admin_read ON public.contact_requests
+    FOR SELECT TO authenticated USING (public.current_app_role() = 'admin');
+CREATE POLICY IF NOT EXISTS contact_admin_update ON public.contact_requests
+    FOR UPDATE TO authenticated
+    USING (public.current_app_role() = 'admin')
+    WITH CHECK (public.current_app_role() = 'admin');
 
--- Anon: read marketplace data
+-- Cut sheet configs + templates: public read (reference data)
+CREATE POLICY IF NOT EXISTS cut_configs_read ON public.cut_sheet_configs
+    FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY IF NOT EXISTS cut_templates_read ON public.cut_sheet_templates
+    FOR SELECT TO anon, authenticated USING (true);
+
+-- Cut sheets: customer reads own PO's sheets, admin reads all
+CREATE POLICY IF NOT EXISTS beef_sheets_read_own ON public.beef_cut_sheets
+    FOR SELECT TO authenticated
+    USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+CREATE POLICY IF NOT EXISTS beef_sheets_insert ON public.beef_cut_sheets
+    FOR INSERT TO authenticated
+    WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+
+CREATE POLICY IF NOT EXISTS pork_sheets_read_own ON public.pork_cut_sheets
+    FOR SELECT TO authenticated
+    USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+CREATE POLICY IF NOT EXISTS pork_sheets_insert ON public.pork_cut_sheets
+    FOR INSERT TO authenticated
+    WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+
+CREATE POLICY IF NOT EXISTS lamb_sheets_read_own ON public.lamb_cut_sheets
+    FOR SELECT TO authenticated
+    USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+CREATE POLICY IF NOT EXISTS lamb_sheets_insert ON public.lamb_cut_sheets
+    FOR INSERT TO authenticated
+    WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+
+CREATE POLICY IF NOT EXISTS goat_sheets_read_own ON public.goat_cut_sheets
+    FOR SELECT TO authenticated
+    USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+CREATE POLICY IF NOT EXISTS goat_sheets_insert ON public.goat_cut_sheets
+    FOR INSERT TO authenticated
+    WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
+
+-- ─── Auth trigger: auto-create profile on signup ────────────────────────
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth AS $$
+BEGIN
+    INSERT INTO public.profiles (id, type, first_name, email)
+    VALUES (
+        new.id,
+        coalesce(nullif(new.raw_user_meta_data ->> 'role', ''), 'customer'),
+        coalesce(
+            nullif(new.raw_user_meta_data ->> 'name', ''),
+            nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
+            'User'
+        ),
+        new.email
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        email = EXCLUDED.email,
+        first_name = coalesce(public.profiles.first_name, EXCLUDED.first_name);
+
+    RETURN new;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- ─── Grants ─────────────────────────────────────────────────────────────
+
 GRANT USAGE ON SCHEMA public TO anon;
-GRANT SELECT ON public.profiles, public.farmer_inventory,
-    public.config_cut_specs, public.processor_costs TO anon;
+GRANT SELECT ON public.profiles, public.farmer_inventory, public.processor_costs,
+    public.weekly_pricing, public.share_adjustments, public.cut_sheet_configs,
+    public.cut_sheet_templates TO anon;
 
--- Authenticated: read/write marketplace + own data (RLS enforces row-level access)
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-
--- Engine: NO grants to anon/authenticated (invisible to REST API)
--- The postgres role used by Python has full access by default.
