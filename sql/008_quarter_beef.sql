@@ -1,0 +1,103 @@
+-- 008_quarter_beef.sql
+-- Add share_size column to beef_cut_sheets and seed quarter defaults.
+-- Run: psql -d terra_mensa -f sql/008_quarter_beef.sql
+
+-- ─── Add share_size column ─────────────────────────────────────────────
+
+ALTER TABLE beef_cut_sheets
+    ADD COLUMN IF NOT EXISTS share_size TEXT NOT NULL DEFAULT '1/2'
+    CHECK (share_size IN ('1/2','1/4'));
+
+-- ─── Seed quarter defaults (halved quantities from standard/steak_lover) ─
+
+INSERT INTO beef_cut_sheet_defaults (name, selections) VALUES
+('standard_quarter', '{
+    "neck":             {"option": "soup_bones",
+                         "yield": {"qty": "2", "unit": "packs"}},
+    "cross_cut_shanks": {"option": "shanks", "thickness": "1",
+                         "yield": {"qty": "4", "unit": "pieces", "note": "avg at 2 inch thick"}},
+    "shoulder":         {"option": "roasts",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "2.5"}},
+    "chuck":            {"option": "roasts",
+                         "yield": {"qty": "1-2", "unit": "roasts", "weight_each_lbs": "4-5"}},
+    "brisket":          {"option": "whole",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "4-5"}},
+    "short_ribs":       {"option": "traditional",
+                         "yield": {"qty": "2-3", "unit": "packs", "weight_each_lbs": "2-3"}},
+    "ribeye":           {"option": "boneless", "thickness": "1",
+                         "yield": {"qty": "4-5", "unit": "pieces", "note": "avg at 1.25 inch thick"}},
+    "big_steak":        {"option": "t_bones", "thickness": "1",
+                         "yield": {"qty": "4-5", "unit": "pieces", "note": "avg at 1.25 inch thick"}},
+    "sirloin":          {"option": "steaks", "thickness": "1",
+                         "yield": {"qty": "2", "unit": "pieces", "note": "avg at 1 inch thick"}},
+    "flank":            {"option": "steak",
+                         "yield": {"qty": "1", "unit": "packs", "note": "may not be available for quarter"}},
+    "skirt":            {"option": "steak",
+                         "yield": {"qty": "1-2", "unit": "packs"}},
+    "top_round":        {"option": "roasts",
+                         "yield": {"qty": "1", "unit": "roasts", "note": "boneless"}},
+    "eye_of_round":     {"option": "roast",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "1"}},
+    "rump":             {"option": "roasts",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "2.5"}},
+    "pikes_peak":       {"option": "roasts",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "2.5"}},
+    "ground_beef":      {"ratio": "80_20", "mix_organs": false,
+                         "yield": {"min_lbs": 22, "pack_size_lbs": 1}},
+    "caveman_blend":    {"quantity": 0,
+                         "yield": {"max_lbs": 5, "pack_size_lbs": 1, "note": "8-10% liver and heart added"}},
+    "stew_meat":        {"quantity": 2,
+                         "yield": {"max_lbs": 5, "pack_size_lbs": 1}},
+    "chili_grind":      {"quantity": 0,
+                         "yield": {"pack_size_lbs": 1, "note": "coarse grind"}},
+    "bones":            {"include": true, "extra_bones": false,
+                         "yield": {"qty": "1-2", "unit": "packs", "note": "knuckle, leg and other bones"}},
+    "organs":           {"liver": false, "heart": false, "kidney": false, "oxtail": false,
+                         "tongue": false, "cheek": false, "sweetbread": false, "suet": false}
+}'::jsonb),
+('steak_lover_quarter', '{
+    "neck":             {"option": "grind",
+                         "yield": {"qty": null, "unit": "ground", "note": "added to ground beef total"}},
+    "cross_cut_shanks": {"option": "shanks", "thickness": "1.5",
+                         "yield": {"qty": "4", "unit": "pieces", "note": "avg at 2 inch thick"}},
+    "shoulder":         {"option": "steaks", "thickness": "1",
+                         "yield": {"qty": null, "unit": "pieces", "note": "thin cut roasts, count varies on thickness"}},
+    "chuck":            {"option": "steaks", "thickness": "1",
+                         "yield": {"qty": null, "unit": "pieces", "note": "thin cut roasts, count varies on thickness"}},
+    "brisket":          {"option": "whole",
+                         "yield": {"qty": "1", "unit": "roasts", "weight_each_lbs": "4-5"}},
+    "short_ribs":       {"option": "traditional",
+                         "yield": {"qty": "2-3", "unit": "packs", "weight_each_lbs": "2-3"}},
+    "ribeye":           {"option": "bone_in", "thickness": "1.5",
+                         "yield": {"qty": "3-4", "unit": "pieces", "note": "avg at 1.25 inch thick, cap/spinalis left on"}},
+    "big_steak":        {"option": "ny_strip_tenderloin", "thickness": "1.25",
+                         "ny_strip_bone": "bone_in", "tenderloin_style": "medallions",
+                         "yield": {"qty": "4-5", "unit": "pieces", "note": "avg for both categories at 1.25 inch thick"}},
+    "sirloin":          {"option": "steaks", "thickness": "1.25",
+                         "yield": {"qty": "2", "unit": "pieces", "note": "avg at 1 inch thick"}},
+    "flank":            {"option": "steak",
+                         "yield": {"qty": "1", "unit": "packs", "note": "may not be available for quarter"}},
+    "skirt":            {"option": "steak",
+                         "yield": {"qty": "1-2", "unit": "packs"}},
+    "top_round":        {"option": "steaks", "thickness": "1",
+                         "yield": {"qty": "1-2", "unit": "steaks", "note": "varies based on thickness"}},
+    "eye_of_round":     {"option": "london_broils",
+                         "yield": {"qty": "2-3", "unit": "pieces"}},
+    "rump":             {"option": "grind",
+                         "yield": {"qty": null, "unit": "ground", "note": "added to ground beef total"}},
+    "pikes_peak":       {"option": "grind",
+                         "yield": {"qty": null, "unit": "ground", "note": "added to ground beef total"}},
+    "ground_beef":      {"ratio": "85_15", "mix_organs": false,
+                         "yield": {"min_lbs": 22, "pack_size_lbs": 1}},
+    "caveman_blend":    {"quantity": 0,
+                         "yield": {"max_lbs": 5, "pack_size_lbs": 1, "note": "8-10% liver and heart added"}},
+    "stew_meat":        {"quantity": 2,
+                         "yield": {"max_lbs": 5, "pack_size_lbs": 1}},
+    "chili_grind":      {"quantity": 0,
+                         "yield": {"pack_size_lbs": 1, "note": "coarse grind"}},
+    "bones":            {"include": true, "extra_bones": false,
+                         "yield": {"qty": "1-2", "unit": "packs", "note": "knuckle, leg and other bones"}},
+    "organs":           {"liver": false, "heart": false, "kidney": false, "oxtail": true,
+                         "tongue": false, "cheek": false, "sweetbread": false, "suet": false}
+}'::jsonb)
+ON CONFLICT (name) DO UPDATE SET selections = EXCLUDED.selections;

@@ -1,4 +1,5 @@
 """PostgreSQL persistence layer for Terra Mensa valuation data."""
+import copy
 import json
 from datetime import datetime
 from typing import Optional
@@ -883,6 +884,105 @@ def save_slaughter_order(order: dict, allocations: list):
                     alloc['po_number'], alloc['share'],
                 ))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Beef cut sheets
+# ---------------------------------------------------------------------------
+
+def save_beef_cut_sheet(po_number: str, half_label: str, selections: dict,
+                        notes: str = None, share_size: str = '1/2'):
+    """Upsert a beef cut sheet (validation handled by DB trigger)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO beef_cut_sheets
+                (po_number, half_label, selections, notes, share_size)
+                VALUES (%s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (po_number, half_label) DO UPDATE SET
+                    selections = EXCLUDED.selections,
+                    notes = EXCLUDED.notes,
+                    share_size = EXCLUDED.share_size,
+                    updated_at = now()
+                RETURNING id
+            """, (po_number, half_label, json.dumps(selections), notes, share_size))
+            row_id = cur.fetchone()[0]
+        conn.commit()
+        return row_id
+    finally:
+        conn.close()
+
+
+def _halve_range(range_str: str) -> str:
+    """Halve a range string like '4-6' -> '2-3' or '8' -> '4'."""
+    if range_str is None:
+        return None
+    parts = range_str.split('-')
+    try:
+        if len(parts) == 2:
+            lo = max(1, int(parts[0]) // 2)
+            hi = max(1, int(parts[1]) // 2)
+            return f"{lo}-{hi}" if lo != hi else str(lo)
+        else:
+            val = max(1, int(parts[0]) // 2)
+            return str(val)
+    except (ValueError, IndexError):
+        return range_str
+
+
+def generate_quarter_selections(half_selections: dict) -> dict:
+    """Derive quarter selections from half: same cuts, halved quantities (floor)."""
+    quarter = copy.deepcopy(half_selections)
+    for key in ('caveman_blend', 'stew_meat', 'chili_grind'):
+        if key in quarter and 'quantity' in quarter[key]:
+            quarter[key]['quantity'] = quarter[key]['quantity'] // 2
+    # Halve yield quantities and lbs for quarter shares
+    for key, val in quarter.items():
+        if isinstance(val, dict) and 'yield' in val:
+            y = val['yield']
+            if 'qty' in y and y['qty'] is not None:
+                y['qty'] = _halve_range(str(y['qty']))
+            if 'min_lbs' in y:
+                y['min_lbs'] = y['min_lbs'] // 2
+            if 'max_lbs' in y:
+                y['max_lbs'] = y['max_lbs'] // 2
+    return quarter
+
+
+def get_beef_cut_sheet(po_number: str, half_label: str = None) -> list:
+    """Return cut sheet(s) for a PO. If half_label given, returns one row."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            if half_label:
+                cur.execute("""
+                    SELECT * FROM beef_cut_sheets
+                    WHERE po_number = %s AND half_label = %s
+                """, (po_number, half_label))
+            else:
+                cur.execute("""
+                    SELECT * FROM beef_cut_sheets
+                    WHERE po_number = %s ORDER BY half_label
+                """, (po_number,))
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_beef_cut_defaults(name: str = 'standard') -> Optional[dict]:
+    """Return a named default selections template."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("""
+                SELECT selections FROM beef_cut_sheet_defaults
+                WHERE name = %s
+            """, (name,))
+            row = cur.fetchone()
+            return dict(row)['selections'] if row else None
     finally:
         conn.close()
 
