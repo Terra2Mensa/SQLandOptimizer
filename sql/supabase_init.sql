@@ -110,6 +110,23 @@ CREATE TABLE IF NOT EXISTS public.share_adjustments (
 CREATE INDEX IF NOT EXISTS idx_share_adjustments_lookup
     ON public.share_adjustments(share, effective_date DESC);
 
+-- ─── Distance matrix (cached driving distances between profiles) ────────
+
+CREATE TABLE IF NOT EXISTS public.distance_matrix (
+    id              SERIAL PRIMARY KEY,
+    origin_profile_id       UUID NOT NULL REFERENCES public.profiles(id),
+    destination_profile_id  UUID NOT NULL REFERENCES public.profiles(id),
+    distance_miles          NUMERIC(8,2) NOT NULL,
+    duration_minutes        NUMERIC(8,1),
+    route_source            TEXT NOT NULL DEFAULT 'google_routes',
+    calculated_at           TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (origin_profile_id, destination_profile_id),
+    CHECK (origin_profile_id < destination_profile_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_distance_matrix_origin ON public.distance_matrix(origin_profile_id);
+CREATE INDEX IF NOT EXISTS idx_distance_matrix_dest ON public.distance_matrix(destination_profile_id);
+
 -- ─── Contact requests (website form) ────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.contact_requests (
@@ -215,6 +232,7 @@ ALTER TABLE public.farmer_inventory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.processor_costs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.weekly_pricing ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.distance_matrix ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.share_adjustments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.contact_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cut_sheet_configs ENABLE ROW LEVEL SECURITY;
@@ -276,6 +294,12 @@ CREATE POLICYweekly_pricing_read ON public.weekly_pricing
 -- Share adjustments: public read
 CREATE POLICYshare_adjustments_read ON public.share_adjustments
     FOR SELECT TO anon, authenticated USING (true);
+
+-- Distance matrix: public read, authenticated insert
+CREATE POLICYdistance_matrix_read ON public.distance_matrix
+    FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICYdistance_matrix_insert ON public.distance_matrix
+    FOR INSERT TO authenticated WITH CHECK (true);
 
 -- Contact requests: anyone inserts, admin reads
 CREATE POLICYcontact_insert ON public.contact_requests
