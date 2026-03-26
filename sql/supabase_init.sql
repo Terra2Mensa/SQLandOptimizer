@@ -233,92 +233,92 @@ RETURNS TEXT LANGUAGE SQL STABLE AS $$
 $$;
 
 -- Profiles: read all, write own
-CREATE POLICY IF NOT EXISTS profiles_read ON public.profiles
+CREATE POLICYprofiles_read ON public.profiles
     FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY IF NOT EXISTS profiles_insert_own ON public.profiles
+CREATE POLICYprofiles_insert_own ON public.profiles
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
-CREATE POLICY IF NOT EXISTS profiles_update_own ON public.profiles
+CREATE POLICYprofiles_update_own ON public.profiles
     FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
 -- Farmer inventory: public read, farm owner writes
-CREATE POLICY IF NOT EXISTS inventory_read ON public.farmer_inventory
+CREATE POLICYinventory_read ON public.farmer_inventory
     FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY IF NOT EXISTS inventory_write ON public.farmer_inventory
+CREATE POLICYinventory_write ON public.farmer_inventory
     FOR INSERT TO authenticated
     WITH CHECK (profile_id = auth.uid() AND EXISTS (
         SELECT 1 FROM public.profiles WHERE id = auth.uid() AND type = 'farmer'
     ));
-CREATE POLICY IF NOT EXISTS inventory_update ON public.farmer_inventory
+CREATE POLICYinventory_update ON public.farmer_inventory
     FOR UPDATE TO authenticated
     USING (profile_id = auth.uid());
-CREATE POLICY IF NOT EXISTS inventory_delete ON public.farmer_inventory
+CREATE POLICYinventory_delete ON public.farmer_inventory
     FOR DELETE TO authenticated
     USING (profile_id = auth.uid());
 
 -- Purchase orders: customer creates/reads own, admin reads all
-CREATE POLICY IF NOT EXISTS po_read_own ON public.purchase_orders
+CREATE POLICYpo_read_own ON public.purchase_orders
     FOR SELECT TO authenticated USING (profile_id = auth.uid());
-CREATE POLICY IF NOT EXISTS po_read_admin ON public.purchase_orders
+CREATE POLICYpo_read_admin ON public.purchase_orders
     FOR SELECT TO authenticated USING (public.current_app_role() = 'admin');
-CREATE POLICY IF NOT EXISTS po_insert_own ON public.purchase_orders
+CREATE POLICYpo_insert_own ON public.purchase_orders
     FOR INSERT TO authenticated WITH CHECK (profile_id = auth.uid());
-CREATE POLICY IF NOT EXISTS po_update_own ON public.purchase_orders
+CREATE POLICYpo_update_own ON public.purchase_orders
     FOR UPDATE TO authenticated USING (profile_id = auth.uid());
 
 -- Processor costs: public read
-CREATE POLICY IF NOT EXISTS processor_costs_read ON public.processor_costs
+CREATE POLICYprocessor_costs_read ON public.processor_costs
     FOR SELECT TO anon, authenticated USING (true);
 
 -- Weekly pricing: public read
-CREATE POLICY IF NOT EXISTS weekly_pricing_read ON public.weekly_pricing
+CREATE POLICYweekly_pricing_read ON public.weekly_pricing
     FOR SELECT TO anon, authenticated USING (true);
 
 -- Share adjustments: public read
-CREATE POLICY IF NOT EXISTS share_adjustments_read ON public.share_adjustments
+CREATE POLICYshare_adjustments_read ON public.share_adjustments
     FOR SELECT TO anon, authenticated USING (true);
 
 -- Contact requests: anyone inserts, admin reads
-CREATE POLICY IF NOT EXISTS contact_insert ON public.contact_requests
+CREATE POLICYcontact_insert ON public.contact_requests
     FOR INSERT TO anon, authenticated WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS contact_admin_read ON public.contact_requests
+CREATE POLICYcontact_admin_read ON public.contact_requests
     FOR SELECT TO authenticated USING (public.current_app_role() = 'admin');
-CREATE POLICY IF NOT EXISTS contact_admin_update ON public.contact_requests
+CREATE POLICYcontact_admin_update ON public.contact_requests
     FOR UPDATE TO authenticated
     USING (public.current_app_role() = 'admin')
     WITH CHECK (public.current_app_role() = 'admin');
 
 -- Cut sheet configs + templates: public read (reference data)
-CREATE POLICY IF NOT EXISTS cut_configs_read ON public.cut_sheet_configs
+CREATE POLICYcut_configs_read ON public.cut_sheet_configs
     FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY IF NOT EXISTS cut_templates_read ON public.cut_sheet_templates
+CREATE POLICYcut_templates_read ON public.cut_sheet_templates
     FOR SELECT TO anon, authenticated USING (true);
 
 -- Cut sheets: customer reads own PO's sheets, admin reads all
-CREATE POLICY IF NOT EXISTS beef_sheets_read_own ON public.beef_cut_sheets
+CREATE POLICYbeef_sheets_read_own ON public.beef_cut_sheets
     FOR SELECT TO authenticated
     USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
-CREATE POLICY IF NOT EXISTS beef_sheets_insert ON public.beef_cut_sheets
+CREATE POLICYbeef_sheets_insert ON public.beef_cut_sheets
     FOR INSERT TO authenticated
     WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS pork_sheets_read_own ON public.pork_cut_sheets
+CREATE POLICYpork_sheets_read_own ON public.pork_cut_sheets
     FOR SELECT TO authenticated
     USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
-CREATE POLICY IF NOT EXISTS pork_sheets_insert ON public.pork_cut_sheets
+CREATE POLICYpork_sheets_insert ON public.pork_cut_sheets
     FOR INSERT TO authenticated
     WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS lamb_sheets_read_own ON public.lamb_cut_sheets
+CREATE POLICYlamb_sheets_read_own ON public.lamb_cut_sheets
     FOR SELECT TO authenticated
     USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
-CREATE POLICY IF NOT EXISTS lamb_sheets_insert ON public.lamb_cut_sheets
+CREATE POLICYlamb_sheets_insert ON public.lamb_cut_sheets
     FOR INSERT TO authenticated
     WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS goat_sheets_read_own ON public.goat_cut_sheets
+CREATE POLICYgoat_sheets_read_own ON public.goat_cut_sheets
     FOR SELECT TO authenticated
     USING (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
-CREATE POLICY IF NOT EXISTS goat_sheets_insert ON public.goat_cut_sheets
+CREATE POLICYgoat_sheets_insert ON public.goat_cut_sheets
     FOR INSERT TO authenticated
     WITH CHECK (po_number IN (SELECT po_number FROM public.purchase_orders WHERE profile_id = auth.uid()));
 
@@ -327,7 +327,7 @@ CREATE POLICY IF NOT EXISTS goat_sheets_insert ON public.goat_cut_sheets
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth AS $$
 BEGIN
-    INSERT INTO public.profiles (id, type, first_name, last_name, email, address, latitude, longitude)
+    INSERT INTO public.profiles (id, type, first_name, last_name, email, phone, address, latitude, longitude, company_name)
     VALUES (
         new.id,
         coalesce(nullif(new.raw_user_meta_data ->> 'type', ''), 'customer'),
@@ -338,17 +338,21 @@ BEGIN
         ),
         nullif(new.raw_user_meta_data ->> 'last_name', ''),
         new.email,
+        nullif(new.raw_user_meta_data ->> 'phone', ''),
         nullif(new.raw_user_meta_data ->> 'address', ''),
         (nullif(new.raw_user_meta_data ->> 'latitude', ''))::numeric,
-        (nullif(new.raw_user_meta_data ->> 'longitude', ''))::numeric
+        (nullif(new.raw_user_meta_data ->> 'longitude', ''))::numeric,
+        nullif(new.raw_user_meta_data ->> 'company_name', '')
     )
     ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         first_name = coalesce(EXCLUDED.first_name, public.profiles.first_name),
         last_name = coalesce(EXCLUDED.last_name, public.profiles.last_name),
+        phone = coalesce(EXCLUDED.phone, public.profiles.phone),
         address = coalesce(EXCLUDED.address, public.profiles.address),
         latitude = coalesce(EXCLUDED.latitude, public.profiles.latitude),
-        longitude = coalesce(EXCLUDED.longitude, public.profiles.longitude);
+        longitude = coalesce(EXCLUDED.longitude, public.profiles.longitude),
+        company_name = coalesce(EXCLUDED.company_name, public.profiles.company_name);
 
     RETURN new;
 END;
