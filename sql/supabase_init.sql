@@ -229,7 +229,7 @@ ALTER TABLE public.goat_cut_sheets ENABLE ROW LEVEL SECURITY;
 -- Helper: get current user's app role from JWT metadata
 CREATE OR REPLACE FUNCTION public.current_app_role()
 RETURNS TEXT LANGUAGE SQL STABLE AS $$
-  SELECT coalesce(auth.jwt() -> 'user_metadata' ->> 'role', 'customer');
+  SELECT coalesce(auth.jwt() -> 'user_metadata' ->> 'type', 'customer');
 $$;
 
 -- Profiles: read all, write own
@@ -327,20 +327,28 @@ CREATE POLICY IF NOT EXISTS goat_sheets_insert ON public.goat_cut_sheets
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth AS $$
 BEGIN
-    INSERT INTO public.profiles (id, type, first_name, email)
+    INSERT INTO public.profiles (id, type, first_name, last_name, email, address, latitude, longitude)
     VALUES (
         new.id,
-        coalesce(nullif(new.raw_user_meta_data ->> 'role', ''), 'customer'),
+        coalesce(nullif(new.raw_user_meta_data ->> 'type', ''), 'customer'),
         coalesce(
-            nullif(new.raw_user_meta_data ->> 'name', ''),
+            nullif(new.raw_user_meta_data ->> 'first_name', ''),
             nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
             'User'
         ),
-        new.email
+        nullif(new.raw_user_meta_data ->> 'last_name', ''),
+        new.email,
+        nullif(new.raw_user_meta_data ->> 'address', ''),
+        (nullif(new.raw_user_meta_data ->> 'latitude', ''))::numeric,
+        (nullif(new.raw_user_meta_data ->> 'longitude', ''))::numeric
     )
     ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
-        first_name = coalesce(public.profiles.first_name, EXCLUDED.first_name);
+        first_name = coalesce(EXCLUDED.first_name, public.profiles.first_name),
+        last_name = coalesce(EXCLUDED.last_name, public.profiles.last_name),
+        address = coalesce(EXCLUDED.address, public.profiles.address),
+        latitude = coalesce(EXCLUDED.latitude, public.profiles.latitude),
+        longitude = coalesce(EXCLUDED.longitude, public.profiles.longitude);
 
     RETURN new;
 END;
