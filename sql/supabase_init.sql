@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders (
     po_number       VARCHAR(50) PRIMARY KEY,
     profile_id      UUID NOT NULL REFERENCES public.profiles(id),
     species         TEXT NOT NULL,
-    share           TEXT NOT NULL CHECK (share IN ('whole','half','quarter','eighth')),
+    share           TEXT NOT NULL CHECK (share IN ('whole','half','quarter','eighth','uncut')),
     inventory_id    UUID REFERENCES public.farmer_inventory(id),
     note            TEXT,
     order_date      TIMESTAMPTZ DEFAULT now(),
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS public.lamb_cut_sheets (
     selections  JSONB NOT NULL DEFAULT '{}',
     notes       TEXT,
     share_size  TEXT NOT NULL DEFAULT '1/1'
-                CHECK (share_size IN ('1/1','1/2')),
+                CHECK (share_size IN ('1/1','1/2','uncut')),
     created_at  TIMESTAMPTZ DEFAULT now(),
     updated_at  TIMESTAMPTZ DEFAULT now(),
     UNIQUE (po_number, half_label)
@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS public.goat_cut_sheets (
     selections  JSONB NOT NULL DEFAULT '{}',
     notes       TEXT,
     share_size  TEXT NOT NULL DEFAULT '1/1'
-                CHECK (share_size IN ('1/1','1/2')),
+                CHECK (share_size IN ('1/1','1/2','uncut')),
     created_at  TIMESTAMPTZ DEFAULT now(),
     updated_at  TIMESTAMPTZ DEFAULT now(),
     UNIQUE (po_number, half_label)
