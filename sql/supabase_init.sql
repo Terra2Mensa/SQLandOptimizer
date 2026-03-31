@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS public.farmer_inventory (
     live_weight_est         NUMERIC(10,1),
     expected_grade          TEXT,
     expected_finish_date    DATE,
+    description             TEXT,
     active                  BOOLEAN DEFAULT TRUE,
     status                  TEXT NOT NULL DEFAULT 'available'
                             CHECK (status IN ('available','reserved','processing','complete')),
