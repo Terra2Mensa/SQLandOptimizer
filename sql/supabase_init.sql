@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders (
     profile_id      UUID NOT NULL REFERENCES public.profiles(id),
     species         TEXT NOT NULL,
     share           TEXT NOT NULL CHECK (share IN ('whole','half','quarter','eighth')),
+    inventory_id    UUID REFERENCES public.farmer_inventory(id),
     note            TEXT,
     order_date      TIMESTAMPTZ DEFAULT now(),
     deposit         NUMERIC(10,2) DEFAULT 0,
