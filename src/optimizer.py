@@ -210,16 +210,23 @@ def create_slaughter_order(conn, animal, processor, batch_pos, cost_breakdown):
     order_number = f"SO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{animal['species'][:3].upper()}-{rand}"
 
     with conn.cursor() as cur:
-        # Create slaughter order
+        # Create slaughter order with full cost breakdown
         cur.execute("""
-            INSERT INTO slaughter_orders (order_number, animal_id, profile_id, species, status, processing_cost)
-            VALUES (%s, %s, %s, %s, 'planned', %s)
+            INSERT INTO slaughter_orders (
+                order_number, animal_id, profile_id, species, status,
+                processing_cost, estimated_hanging_weight,
+                farmer_transport_cost, total_customer_transport_cost
+            )
+            VALUES (%s, %s, %s, %s, 'planned', %s, %s, %s, %s)
         """, (
             order_number,
             animal['id'],
             processor['processor_id'],
             animal['species'],
             cost_breakdown['processing_cost'],
+            cost_breakdown['hanging_weight'],
+            cost_breakdown['farmer_transport'],
+            cost_breakdown['customer_transport'],
         ))
 
         # Reserve the animal
@@ -228,15 +235,16 @@ def create_slaughter_order(conn, animal, processor, batch_pos, cost_breakdown):
             WHERE id = %s
         """, (animal['id'],))
 
-        # Confirm each PO and link to animal
+        # Confirm each PO, link to animal AND slaughter order
         for po in batch_pos:
             cur.execute("""
                 UPDATE purchase_orders SET
                     inventory_id = %s,
+                    slaughter_order_number = %s,
                     status = 'confirmed',
                     updated_at = now()
                 WHERE po_number = %s
-            """, (animal['id'], po['po_number']))
+            """, (animal['id'], order_number, po['po_number']))
 
     conn.commit()
     return order_number

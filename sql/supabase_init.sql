@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders (
     species         TEXT NOT NULL,
     share           TEXT NOT NULL CHECK (share IN ('whole','half','quarter','eighth','uncut')),
     inventory_id    UUID REFERENCES public.farmer_inventory(id),
+    slaughter_order_number VARCHAR(50),
     note            TEXT,
     order_date      TIMESTAMPTZ DEFAULT now(),
     deposit         NUMERIC(10,2) DEFAULT 0,
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_po_profile ON public.purchase_orders(profile_id);
+CREATE INDEX IF NOT EXISTS idx_po_slaughter_order ON public.purchase_orders(slaughter_order_number);
 CREATE INDEX IF NOT EXISTS idx_po_status ON public.purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_po_species_status ON public.purchase_orders(species, status);
 
