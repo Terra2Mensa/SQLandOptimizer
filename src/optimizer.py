@@ -89,14 +89,29 @@ def get_distance(conn, id_a, id_b):
 def aggregate_pos_into_batches(pos_list, fill_threshold):
     """Group POs into batches that fill at least one whole animal.
 
+    Priority: whole/uncut POs first (each gets its own animal),
+    then partial POs batched together (must share animals).
+
     Returns: list of batches, where each batch is a list of PO dicts.
     Remaining POs that don't fill an animal are excluded.
     """
     batches = []
+
+    # Pass 1: Whole/uncut POs — each gets its own dedicated animal (FIFO)
+    whole_pos = [po for po in pos_list if po['share'] in ('whole', 'uncut')]
+    partial_pos = [po for po in pos_list if po['share'] not in ('whole', 'uncut')]
+
+    for po in whole_pos:
+        batches.append([po])
+
+    if whole_pos:
+        print(f"    Pass 1: {len(whole_pos)} whole/uncut POs → {len(whole_pos)} dedicated animals")
+
+    # Pass 2: Partial POs — batch together until fill_threshold (FIFO)
     current_batch = []
     current_sum = 0.0
 
-    for po in pos_list:
+    for po in partial_pos:
         fraction = SHARE_FRACTIONS.get(po['share'], 0)
         if fraction <= 0:
             continue
@@ -109,10 +124,14 @@ def aggregate_pos_into_batches(pos_list, fill_threshold):
             current_batch = []
             current_sum = 0.0
 
-    # Remaining POs don't fill a batch — leave them pending
+    if partial_pos:
+        filled = len(batches) - len(whole_pos)
+        print(f"    Pass 2: {len(partial_pos)} partial POs → {filled} shared animal(s)")
+
+    # Remaining partial POs that don't fill a batch
     if current_batch:
-        remaining = [po['po_number'] for po in current_batch]
-        print(f"    {len(current_batch)} POs remaining (sum={current_sum:.3f}): {remaining}")
+        remaining = [f"{po['po_number']}({po['share']})" for po in current_batch]
+        print(f"    {len(current_batch)} partial POs remaining (sum={current_sum:.3f}): {remaining}")
 
     return batches
 
