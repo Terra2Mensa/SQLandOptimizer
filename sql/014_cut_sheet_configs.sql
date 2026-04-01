@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS cut_sheet_configs (
 -- ─── BEEF ──────────────────────────────────────────────────────────────────
 
 INSERT INTO cut_sheet_configs (species, config) VALUES
-('beef', '{
+('cattle', '{
   "label": "Beef",
   "baseShareSize": "1/2",
   "shareSizes": ["1/2", "1/4", "1/8"],
