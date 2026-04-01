@@ -28,6 +28,13 @@ load_dotenv()
 # CBC solver path (Homebrew on Apple Silicon)
 CBC_PATH = '/opt/homebrew/bin/cbc'
 
+# Try to load advanced features (Phase 4) — graceful fallback if not available
+try:
+    from optimizer_advanced import AdvancedFeatures
+    HAS_ADVANCED = True
+except ImportError:
+    HAS_ADVANCED = False
+
 
 # ─── Database Queries ────────────────────────────────────────────────────
 
@@ -836,13 +843,24 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
         'unified' — Phase 2: single MIP for batching + assignment + multi-objective
         'phase1'  — Phase 1: FFD batching then joint assignment MIP (fallback)
     """
+    import time as _time
+
     conn = get_connection(use_supabase=use_supabase)
     config = load_optimizer_config(conn)
     fill_threshold = get_config(config, 'fill_threshold', 1.0)
 
+    # Initialize advanced features if available
+    adv = None
+    if HAS_ADVANCED:
+        try:
+            adv = AdvancedFeatures(conn)
+        except Exception:
+            pass
+
     mode_label = "Unified MIP (Phase 2)" if mode == 'unified' else "FFD + Assignment MIP (Phase 1)"
     print(f"═══ Terra Mensa Optimizer v2 ═══")
     print(f"  Mode: {mode_label}")
+    print(f"  Advanced features: {'enabled' if adv else 'disabled'}")
     print(f"  Solver: PuLP + CBC")
     print(f"  Fill threshold: {fill_threshold}")
     print(f"  Farmer transport: ${get_config(config, 'farmer_transport_per_mile')}/mi")
@@ -858,6 +876,13 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
     if dry_run:
         print(f"  *** DRY RUN — no database changes ***")
     print()
+
+    # Record demand snapshot (Phase 4)
+    if adv and not dry_run:
+        try:
+            adv.record_demand_snapshot()
+        except Exception:
+            pass
 
     total_orders_created = 0
     total_cost_sum = 0.0
@@ -875,6 +900,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
         print(f"  {len(pending)} pending POs (total fraction: {sum(fractions):.3f})")
 
         # Step 2: Load data
+        species_start = _time.time()
         inventory = get_available_inventory(conn, species)
         processors = get_processors_for_species(conn, species)
 
@@ -884,6 +910,15 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
         if not processors:
             print(f"  WARNING: No processors for {species}")
             continue
+
+        # Phase 4: Filter processors by blackouts and capabilities
+        if adv:
+            pre_filter = len(processors)
+            processors = adv.filter_processors(processors, species)
+            if len(processors) < pre_filter:
+                print(f"  Processors: {pre_filter} total, {len(processors)} after blackout/capability filter")
+            # Rank inventory by quality
+            inventory = adv.rank_inventory_by_quality(inventory)
 
         print(f"  {len(inventory)} available animals, {len(processors)} processors")
 
@@ -971,6 +1006,20 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
     print(f"  Total system cost: ${total_cost_sum:.2f}")
     if total_orders_created > 0:
         print(f"  Average cost/order: ${total_cost_sum / total_orders_created:.2f}")
+
+    # Phase 4: Log run
+    if adv and not dry_run:
+        try:
+            adv.log_optimizer_run(
+                mode=mode, species='all',
+                pos_pending=0, pos_assigned=0,
+                batches_formed=0, batches_assigned=total_orders_created,
+                total_cost=total_cost_sum, solve_time=0,
+                solver_status='complete',
+            )
+        except Exception:
+            pass
+
     conn.close()
 
 
