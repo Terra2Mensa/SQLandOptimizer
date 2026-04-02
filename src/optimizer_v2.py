@@ -882,7 +882,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
         try:
             adv.record_demand_snapshot()
         except Exception:
-            pass
+            conn.rollback()
 
     total_orders_created = 0
     total_cost_sum = 0.0
@@ -1018,7 +1018,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
                 solver_status='complete',
             )
         except Exception:
-            pass
+            conn.rollback()
 
     conn.close()
 
