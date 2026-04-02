@@ -65,11 +65,13 @@ def get_available_inventory(conn, species):
 
 
 def get_processors_for_species(conn, species):
-    """Get all processors with costs for a species."""
+    """Get all processors with costs, per-processor radius, and state for a species."""
     with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute("""
             SELECT p.id as processor_id, p.company_name, p.latitude, p.longitude,
-                   pc.kill_fee, pc.fab_cost_per_lb, pc.shrink_pct, pc.daily_capacity_head
+                   p.state_code,
+                   pc.kill_fee, pc.fab_cost_per_lb, pc.shrink_pct, pc.daily_capacity_head,
+                   pc.farmer_radius_miles, pc.customer_radius_miles
             FROM profiles p
             JOIN processor_costs pc ON pc.profile_id = p.id AND pc.species = %s
             WHERE p.type = 'processor'
@@ -200,8 +202,9 @@ def compute_batch_processor_cost(batch, animal, proc, customers, distances, conf
     """
     farmer_id = animal['profile_id']
     proc_id = proc['processor_id']
-    max_farmer_dist = get_config(config, 'max_farmer_distance_miles', 50)
-    max_customer_dist = get_config(config, 'max_customer_distance_miles', 50)
+    # Per-processor radius (falls back to global config)
+    max_farmer_dist = float(proc.get('farmer_radius_miles') or 0) or get_config(config, 'max_farmer_distance_miles', 50)
+    max_customer_dist = float(proc.get('customer_radius_miles') or 0) or get_config(config, 'max_customer_distance_miles', 30)
     farmer_rate = get_config(config, 'farmer_transport_per_mile', 2)
     customer_rate = get_config(config, 'customer_transport_per_mile', 1)
 
@@ -373,10 +376,17 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
     w_util_balance = get_config(config, 'w_util_balance', 0.2)
     w_geo_penalty = get_config(config, 'w_geo_penalty', 0.1)
     fill_threshold = get_config(config, 'fill_threshold', 1.0)
-    max_farmer_dist = get_config(config, 'max_farmer_distance_miles', 50)
-    max_customer_dist = get_config(config, 'max_customer_distance_miles', 50)
+    global_farmer_dist = get_config(config, 'max_farmer_distance_miles', 50)
+    global_customer_dist = get_config(config, 'max_customer_distance_miles', 30)
     farmer_rate = get_config(config, 'farmer_transport_per_mile', 2)
     customer_rate = get_config(config, 'customer_transport_per_mile', 1)
+
+    # Build per-processor radius (falls back to global)
+    proc_farmer_radius = {}
+    proc_customer_radius = {}
+    for p, proc in enumerate(processors):
+        proc_farmer_radius[p] = float(proc.get('farmer_radius_miles') or 0) or global_farmer_dist
+        proc_customer_radius[p] = float(proc.get('customer_radius_miles') or 0) or global_customer_dist
 
     # ── Pre-compute feasibility and costs ──
 
@@ -402,14 +412,14 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
     print(f"    Unified MIP: {n_whole} whole + {n_partial} partial POs, "
           f"{n_animals} animals, {n_procs} processors, up to {max_batches} partial batches")
 
-    # Pre-compute: which (customer, processor) pairs are feasible?
-    cust_proc_dist = {}  # (po_idx_in_partial, proc_idx) -> distance
+    # Pre-compute: which (customer, processor) pairs are feasible? (per-processor radius)
+    cust_proc_dist = {}
     for i, po in enumerate(partial_pos_list):
         cid = str(po['profile_id'])
         for p, proc in enumerate(processors):
             pid = proc['processor_id']
             d = lookup_distance(distances, cid, pid)
-            if d is not None and d <= max_customer_dist:
+            if d is not None and d <= proc_customer_radius[p]:
                 cust_proc_dist[(i, p)] = d
 
     # Also for whole POs
@@ -419,17 +429,17 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
         for p, proc in enumerate(processors):
             pid = proc['processor_id']
             d = lookup_distance(distances, cid, pid)
-            if d is not None and d <= max_customer_dist:
+            if d is not None and d <= proc_customer_radius[p]:
                 whole_cust_proc_dist[(i, p)] = d
 
-    # Pre-compute: which (farmer/animal, processor) pairs are feasible?
+    # Pre-compute: which (farmer/animal, processor) pairs are feasible? (per-processor radius)
     farmer_proc_dist = {}
     for a, animal in enumerate(inventory):
         fid = animal['profile_id']
         for p, proc in enumerate(processors):
             pid = proc['processor_id']
             d = lookup_distance(distances, fid, pid)
-            if d is not None and d <= max_farmer_dist:
+            if d is not None and d <= proc_farmer_radius[p]:
                 farmer_proc_dist[(a, p)] = d
 
     # Pre-compute processing cost per (animal, processor)
@@ -866,8 +876,8 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
     print(f"  Fill threshold: {fill_threshold}")
     print(f"  Farmer transport: ${get_config(config, 'farmer_transport_per_mile')}/mi")
     print(f"  Customer transport: ${get_config(config, 'customer_transport_per_mile')}/mi")
-    print(f"  Max farmer distance: {get_config(config, 'max_farmer_distance_miles')} mi")
-    print(f"  Max customer distance: {get_config(config, 'max_customer_distance_miles')} mi")
+    print(f"  Default farmer radius: {get_config(config, 'max_farmer_distance_miles')} mi (per-processor override supported)")
+    print(f"  Default customer radius: {get_config(config, 'max_customer_distance_miles')} mi (per-processor override supported)")
     if mode == 'unified':
         print(f"  Weights: cost={get_config(config, 'w_cost', 1.0)}, "
               f"avg_wait={get_config(config, 'w_avg_wait', 0.3)}, "
