@@ -177,12 +177,10 @@ class PricingEngine:
 
     def _est_hanging_weight(self, species, share):
         """Estimate hanging weight for a share (for per-lb display)."""
-        from optimizer_config import SHARE_FRACTIONS, DRESS_PCT
+        from optimizer_config import SHARE_FRACTIONS, get_dress_pct, get_typical_live_weight
         fraction = SHARE_FRACTIONS.get(share, 0)
-        # Typical live weights
-        typical_live = {'cattle': 1200, 'pork': 275, 'lamb': 115, 'goat': 90}
-        live = typical_live.get(species, 0)
-        dress = DRESS_PCT.get(species, 0.60)
+        live = get_typical_live_weight(self.config, species)
+        dress = get_dress_pct(self.config, species)
         return live * dress * fraction
 
     # ─── Farmer Payment ──────────────────────────────────────────────────
@@ -209,9 +207,8 @@ class PricingEngine:
         base_half = self.base_prices.get((species, 'half'), 0)
         modifier_half = self.modifiers.get((species, 'half'), 1.0)
         # Estimate per-lb from half price ÷ half hanging weight
-        from optimizer_config import DRESS_PCT
-        typical_live = {'cattle': 1200, 'pork': 275, 'lamb': 115, 'goat': 90}
-        half_hw = typical_live.get(species, 0) * DRESS_PCT.get(species, 0.60) * 0.5
+        from optimizer_config import get_dress_pct, get_typical_live_weight
+        half_hw = get_typical_live_weight(self.config, species) * get_dress_pct(self.config, species) * 0.5
         dtc_per_lb = (base_half * modifier_half / half_hw) if half_hw > 0 else 0
 
         commodity_per_lb = self.commodity_base.get(species, 0)
@@ -248,15 +245,16 @@ class PricingEngine:
 
     def compute_payment_processing_fee(self, amount, method='card'):
         """Compute payment processing fee by method.
-
-        Card (Stripe): 2.9% + $0.30
-        ACH (Stripe):  0.8%, capped at $5.00
-        Check:         $0.00
+        All rates from optimizer_config.
         """
         if method == 'card':
-            return round(amount * 0.029 + 0.30, 2)
+            pct = self.config.get('stripe_card_pct', 0.029)
+            flat = self.config.get('stripe_card_flat', 0.30)
+            return round(amount * pct + flat, 2)
         elif method == 'ach':
-            return min(round(amount * 0.008, 2), 5.00)
+            pct = self.config.get('stripe_ach_pct', 0.008)
+            cap = self.config.get('stripe_ach_cap', 5.00)
+            return min(round(amount * pct, 2), cap)
         elif method == 'check':
             return 0.00
         return 0.00

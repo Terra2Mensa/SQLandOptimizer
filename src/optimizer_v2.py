@@ -20,7 +20,7 @@ import pulp
 
 from optimizer_config import (
     get_connection, load_optimizer_config, get_config,
-    SHARE_FRACTIONS, DRESS_PCT, SPECIES_LIST,
+    SHARE_FRACTIONS, SPECIES_LIST, get_dress_pct,
 )
 
 load_dotenv()
@@ -206,7 +206,7 @@ def compute_batch_processor_cost(batch, animal, proc, customers, distances, conf
     customer_rate = get_config(config, 'customer_transport_per_mile', 1)
 
     live_weight = float(animal.get('live_weight_est') or 0)
-    dress_pct = DRESS_PCT.get(animal['species'], 0.60)
+    dress_pct = get_dress_pct(config, animal['species'])
     hanging_weight = live_weight * dress_pct
 
     # Farmer → processor distance
@@ -294,7 +294,7 @@ def solve_joint_assignment(batches, inventory, processors, customers, distances,
 
     # Objective: maximize assignments first, then minimize cost among those
     # BIG_BONUS ensures assigning one more batch always beats any cost savings
-    BIG_BONUS = 100000
+    BIG_BONUS = int(get_config(config, 'mip_assignment_bonus', 100000))
     prob += pulp.lpSum(cost_matrix[key] * x[key] for key in feasible_keys) - \
             BIG_BONUS * pulp.lpSum(x[key] for key in feasible_keys)
 
@@ -436,7 +436,7 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
     proc_cost = {}
     for a, animal in enumerate(inventory):
         live_weight = float(animal.get('live_weight_est') or 0)
-        dress_pct = DRESS_PCT.get(animal['species'], 0.60)
+        dress_pct = get_dress_pct(config, animal['species'])
         hw = live_weight * dress_pct
         for p, proc in enumerate(processors):
             if (a, p) in farmer_proc_dist:
@@ -630,7 +630,7 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
         + w_max_wait * W_max
         + w_util_balance * U_max
         + w_geo_penalty * obj_customer_transport
-        - 100000 * pulp.lpSum(z[b] for b in range(max_batches))
+        - int(get_config(config, 'mip_assignment_bonus', 100000)) * pulp.lpSum(z[b] for b in range(max_batches))
     )
 
     # ── Constraints ──
@@ -704,7 +704,8 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
     print(f"    Weights: cost={w_cost}, avg_wait={w_avg_wait}, max_wait={w_max_wait}, "
           f"util={w_util_balance}, geo={w_geo_penalty}")
 
-    prob.solve(pulp.COIN_CMD(msg=0, path=CBC_PATH, timeLimit=60))
+    time_limit = int(get_config(config, 'mip_time_limit_seconds', 60))
+    prob.solve(pulp.COIN_CMD(msg=0, path=CBC_PATH, timeLimit=time_limit))
 
     if prob.status != pulp.constants.LpStatusOptimal:
         print(f"    MIP solver status: {pulp.LpStatus[prob.status]}")
@@ -853,7 +854,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
     adv = None
     if HAS_ADVANCED:
         try:
-            adv = AdvancedFeatures(conn)
+            adv = AdvancedFeatures(conn, config)
         except Exception:
             pass
 

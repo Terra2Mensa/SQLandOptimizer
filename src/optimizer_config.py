@@ -39,7 +39,7 @@ def get_config(config, key, default=0):
     return config.get(key, default)
 
 
-# Constants
+# Constants (share fractions are structural, not tunable)
 SHARE_FRACTIONS = {
     'whole': 1.0,
     'half': 0.5,
@@ -48,11 +48,41 @@ SHARE_FRACTIONS = {
     'uncut': 1.0,
 }
 
-DRESS_PCT = {
+SPECIES_LIST = ['cattle', 'pork', 'lamb', 'goat']
+
+# Fallback defaults (used only if optimizer_config table is missing the keys)
+_DRESS_PCT_DEFAULTS = {
     'cattle': 0.60,
     'pork': 0.72,
     'lamb': 0.50,
     'goat': 0.50,
 }
 
-SPECIES_LIST = ['cattle', 'pork', 'lamb', 'goat']
+_TYPICAL_LIVE_DEFAULTS = {
+    'cattle': 1200,
+    'pork': 275,
+    'lamb': 115,
+    'goat': 90,
+}
+
+
+def get_dress_pct(config, species):
+    """Get dressing percentage from config, with hardcoded fallback."""
+    return config.get(f'dress_pct_{species}', _DRESS_PCT_DEFAULTS.get(species, 0.60))
+
+
+def get_typical_live_weight(config, species):
+    """Get typical live weight from config, with hardcoded fallback."""
+    return config.get(f'typical_live_weight_{species}', _TYPICAL_LIVE_DEFAULTS.get(species, 0))
+
+
+# Legacy alias — reads from config if available, falls back to defaults
+def get_dress_pct_dict(config=None):
+    """Build DRESS_PCT dict from config (or defaults if no config)."""
+    if config is None:
+        return dict(_DRESS_PCT_DEFAULTS)
+    return {sp: get_dress_pct(config, sp) for sp in SPECIES_LIST}
+
+
+# For backward compatibility with code that imports DRESS_PCT directly
+DRESS_PCT = dict(_DRESS_PCT_DEFAULTS)

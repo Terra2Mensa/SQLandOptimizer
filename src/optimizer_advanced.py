@@ -27,8 +27,9 @@ from collections import defaultdict
 class AdvancedFeatures:
     """Advanced optimizer features that augment the base MIP solver."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, config=None):
         self.conn = conn
+        self.config = config or {}
         self._load_blackouts()
         self._load_zones()
         self._load_reliability()
@@ -129,18 +130,21 @@ class AdvancedFeatures:
         """Get reliability score for a processor (0-1, higher is better).
 
         Based on on-time rate and quality score.
-        Returns 0.8 default if no history exists.
+        All weights and defaults from optimizer_config.
         """
+        default_score = self.config.get('default_reliability_score', 0.8)
+        w_ontime = self.config.get('reliability_weight_ontime', 0.6)
+        w_quality = self.config.get('reliability_weight_quality', 0.4)
+
         pid = str(processor_id)
         if pid not in self.reliability:
-            return 0.8  # default for unknown processors
+            return default_score
 
         data = self.reliability[pid]
-        on_time = float(data.get('on_time_rate', 0.8))
-        quality = float(data.get('avg_quality', 3.5)) / 5.0  # normalize to 0-1
+        on_time = float(data.get('on_time_rate', default_score))
+        quality = float(data.get('avg_quality', 3.5)) / 5.0
 
-        # Weighted: 60% on-time, 40% quality
-        return round(on_time * 0.6 + quality * 0.4, 3)
+        return round(on_time * w_ontime + quality * w_quality, 3)
 
     def adjust_cost_for_reliability(self, base_cost, processor_id):
         """Adjust cost by reliability: EffectiveCost = BaseCost / ReliabilityScore.
@@ -209,29 +213,27 @@ class AdvancedFeatures:
         """Score how well an animal matches customer quality expectations.
 
         Returns: 0.0 (worst) to 1.0 (best) match score.
-
-        Current simple model:
-            premium tier → 1.0
-            standard tier → 0.7
-            economy tier → 0.4
-            grass-finished → +0.1 bonus
-            known breed → +0.05 bonus
+        All scores and bonuses from optimizer_config.
         """
-        score = 0.7  # default standard
+        score_premium = self.config.get('quality_score_premium', 1.0)
+        score_standard = self.config.get('quality_score_standard', 0.7)
+        score_economy = self.config.get('quality_score_economy', 0.4)
+        bonus_grass = self.config.get('quality_bonus_grass', 0.1)
+        bonus_breed = self.config.get('quality_bonus_breed', 0.05)
 
         tier = animal.get('quality_tier', 'standard')
         if tier == 'premium':
-            score = 1.0
+            score = score_premium
         elif tier == 'economy':
-            score = 0.4
+            score = score_economy
+        else:
+            score = score_standard
 
-        finish = animal.get('finish_method', 'grain')
-        if finish == 'grass':
-            score = min(score + 0.1, 1.0)
+        if animal.get('finish_method') == 'grass':
+            score = min(score + bonus_grass, 1.0)
 
-        breed = animal.get('breed')
-        if breed:
-            score = min(score + 0.05, 1.0)
+        if animal.get('breed'):
+            score = min(score + bonus_breed, 1.0)
 
         return round(score, 2)
 
@@ -348,19 +350,17 @@ class AdvancedFeatures:
 
     # ─── 7. Hold-Back Logic ─────────────────────────────────────────────
 
-    def should_hold_batch(self, batch_pos, fill_fraction, config):
+    def should_hold_batch(self, batch_pos, fill_fraction, config=None):
         """Determine if a batch should be held for the next optimizer cycle.
 
         Hold-back rules (from Batched Bin Packing research, Gutin et al.):
-        - Batch >= 85% full → dispatch immediately
-        - Batch 60-84% full with oldest PO > 7 days → dispatch
-        - Batch < 60% full or all POs < 3 days old → hold
+        All thresholds read from optimizer_config (or self.config fallback).
 
         Returns: (should_hold, reason)
         """
+        cfg = config or self.config
         now = datetime.now()
 
-        # Calculate oldest PO age
         oldest_age = 0
         for po in batch_pos:
             created = po.get('created_at')
@@ -370,10 +370,10 @@ class AdvancedFeatures:
                 age = (now - created).days
                 oldest_age = max(oldest_age, age)
 
-        hold_dispatch_threshold = config.get('hold_dispatch_threshold', 0.85)
-        hold_age_threshold = config.get('hold_age_threshold', 7)
-        hold_min_fill = config.get('hold_min_fill', 0.60)
-        hold_min_age = config.get('hold_min_age', 3)
+        hold_dispatch_threshold = cfg.get('hold_dispatch_threshold', 0.85)
+        hold_age_threshold = cfg.get('hold_age_threshold', 7)
+        hold_min_fill = cfg.get('hold_min_fill', 0.60)
+        hold_min_age = cfg.get('hold_min_age', 3)
 
         if fill_fraction >= hold_dispatch_threshold:
             return False, f"fill {fill_fraction:.2f} >= {hold_dispatch_threshold} → dispatch"
