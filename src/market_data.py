@@ -437,7 +437,7 @@ def save_to_database(conn, market_data):
 
         # Dressed price
         dressed_cwt = None
-        for key in ('fed_cattle', 'gross_carcass', 'net_carcass'):
+        for key in ('fed_cattle', 'carcass', 'gross_carcass', 'net_carcass'):
             if key in mdata.get('dressed_prices', {}):
                 dressed_cwt = mdata['dressed_prices'][key]
                 break
