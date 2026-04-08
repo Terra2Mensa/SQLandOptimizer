@@ -127,13 +127,8 @@ def compute_prices(species, market_data, config, avg_kill_fee, avg_fab_per_lb):
     platform_total = cost_basis * (1 + platform_margin_pct)
     take_home_per_lb = platform_total / cutout_yield if cutout_yield > 0 else 0
 
-    # Compute total price per share
-    prices = {}
-    for share in SHARE_CONFIGS.get(species, ['whole', 'half']):
-        fraction = SHARE_FRACTIONS.get(share, 1.0)
-        share_take_home = take_home_wt * fraction
-        total = round(take_home_per_lb * share_take_home, 2)
-        prices[share] = total
+    # Store as one $/lb per species (share modifiers applied separately by website)
+    prices = {'per_lb': round(take_home_per_lb, 2)}
 
     breakdown = {
         'species': species,
@@ -239,11 +234,16 @@ def run_price_model(use_supabase=False, dry_run=False):
         print(f"  ÷ Cutout yield ({breakdown['cutout_yield']*100:.0f}%): ${breakdown['take_home_per_lb']:.2f}/lb take-home")
         print()
 
-        # Show prices
-        for share, price in prices.items():
+        # Show per-lb price and estimated share totals
+        per_lb = prices['per_lb']
+        print(f"  ──> price_custom: ${per_lb}/lb take-home")
+        print(f"  Estimated totals (for reference):")
+        for share in SHARE_CONFIGS.get(species, ['whole', 'half']):
             fraction = SHARE_FRACTIONS.get(share, 1.0)
             take_home = breakdown['typical_take_home_weight'] * fraction
-            print(f"  {share:<10} {take_home:>6.0f} lbs × ${breakdown['take_home_per_lb']}/lb = ${price:>8,.2f}")
+            modifier = 1.0  # modifier applied by website, not here
+            total = per_lb * take_home
+            print(f"    {share:<10} {take_home:>6.0f} lbs × ${per_lb}/lb = ${total:>8,.2f}")
 
         # Guard rail check
         current = get_current_prices(conn, species)
