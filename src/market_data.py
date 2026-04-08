@@ -216,6 +216,11 @@ def fetch_pork_data():
             # Composite primal values ($/cwt carcass)
             if section_name == 'Cutout and Primal Values':
                 row = results[0]
+                # Carcass composite IS the dressed price
+                carcass_val = parse_number(row.get('pork_carcass'))
+                if carcass_val > 0:
+                    result['dressed_prices']['carcass'] = carcass_val
+
                 for key in ('pork_carcass', 'pork_loin', 'pork_butt', 'pork_picnic',
                             'pork_rib', 'pork_ham', 'pork_belly'):
                     val = parse_number(row.get(key))
@@ -345,8 +350,13 @@ def fetch_goat_data():
         except Exception as e:
             print(f"  WARNING: Goat auction fetch failed: {e}")
 
-    if not result['live_prices']:
-        print(f"  Goat: no live data available (manual entry may be needed)")
+    if not result['live_prices'] and not result['cutout_prices']:
+        print(f"  Goat: no data available — using lamb prices (comparable species)")
+        lamb_data = fetch_lamb_data()
+        result['dressed_prices'] = lamb_data.get('dressed_prices', {})
+        result['cutout_prices'] = lamb_data.get('cutout_prices', {})
+        result['report_date'] = lamb_data.get('report_date', result['report_date'])
+        result['data_source_note'] = 'lamb proxy'
 
     return result
 
@@ -375,6 +385,141 @@ def fetch_all_market_data(species_list=None):
             results[species] = fetchers[species]()
 
     return results
+
+
+# ─── Database Persistence ────────────────────────────────────────────────
+
+def save_to_database(conn, market_data):
+    """Write fetched market data to weekly_market_prices table.
+
+    Computes floor (auction value) and cutout value for each species.
+    """
+    from config import PROCESSING_RATES
+
+    # Typical live weights and dressing %
+    typical = {
+        'cattle': {'live': 1300, 'dress': 0.60},
+        'pork':   {'live': 275,  'dress': 0.72},
+        'lamb':   {'live': 115,  'dress': 0.50},
+        'goat':   {'live': 90,   'dress': 0.50},
+    }
+
+    rows_written = 0
+    cur = conn.cursor()
+
+    for species, mdata in market_data.items():
+        report_date = mdata.get('report_date')
+        if not report_date:
+            print(f"  {species}: no report date, skipping DB write")
+            continue
+
+        # Normalize date format (USDA uses MM/DD/YYYY)
+        if '/' in report_date:
+            parts = report_date.split('/')
+            if len(parts) == 3:
+                report_date = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+
+        t = typical.get(species, {'live': 0, 'dress': 0.60})
+        live_wt = t['live']
+        dress_pct = t['dress']
+        hanging_wt = live_wt * dress_pct
+
+        # Processing cost estimate (avg from config)
+        proc = PROCESSING_RATES.get(species, {})
+        proc_cost = proc.get('kill_fee', 0) + proc.get('fab_cost_per_lb', 0) * hanging_wt
+
+        # Live price (floor basis)
+        live_cwt = None
+        for key in ('fed_cattle', 'national', 'auction'):
+            if key in mdata.get('live_prices', {}):
+                live_cwt = mdata['live_prices'][key]
+                break
+
+        # Dressed price
+        dressed_cwt = None
+        for key in ('fed_cattle', 'gross_carcass', 'net_carcass'):
+            if key in mdata.get('dressed_prices', {}):
+                dressed_cwt = mdata['dressed_prices'][key]
+                break
+
+        # Floor = auction value of whole animal
+        floor = round(live_wt * live_cwt / 100, 2) if live_cwt else None
+
+        # Cutout value (avg $/cwt across all cuts × hanging weight)
+        cutout_cwt = None
+        cutout_total = None
+        grades = list(mdata.get('cutout_prices', {}).keys())
+        if not grades:
+            grades = ['standard']
+
+        for grade in grades:
+            cuts = mdata.get('cutout_prices', {}).get(grade, {})
+            if not cuts:
+                continue
+
+            # Compute avg cutout $/cwt
+            vals = []
+            for v in cuts.values():
+                if isinstance(v, dict):
+                    vals.append(v.get('price_cwt', 0))
+                else:
+                    vals.append(v)
+            vals = [v for v in vals if v > 0]
+
+            if not vals:
+                continue
+
+            avg_cwt = sum(vals) / len(vals)
+
+            # For cattle, compute weighted cutout from IMPS yields
+            if species == 'cattle' and grade in ('choice', 'select', 'prime'):
+                weighted_total = 0
+                total_yield = 0
+                for imps_code, price_cwt in cuts.items():
+                    if imps_code in SUBPRIMAL_YIELDS:
+                        yield_pct = SUBPRIMAL_YIELDS[imps_code][1]
+                        cut_wt = hanging_wt * yield_pct / 100
+                        cut_value = cut_wt * price_cwt / 100
+                        weighted_total += cut_value
+                        total_yield += yield_pct
+                if weighted_total > 0:
+                    cutout_total = round(weighted_total, 2)
+                    cutout_cwt = round(weighted_total / hanging_wt * 100, 2)
+
+            if cutout_cwt is None:
+                cutout_cwt = round(avg_cwt, 2)
+                cutout_total = round(hanging_wt * avg_cwt / 100, 2)
+
+            cur.execute("""
+                INSERT INTO weekly_market_prices
+                    (report_date, species, quality_grade,
+                     live_price_cwt, dressed_price_cwt, floor_whole_animal,
+                     cutout_value_cwt, cutout_whole_animal,
+                     typical_live_weight, typical_hanging_weight, processor_cost_est,
+                     data_source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (report_date, species, quality_grade) DO UPDATE SET
+                    live_price_cwt = EXCLUDED.live_price_cwt,
+                    dressed_price_cwt = EXCLUDED.dressed_price_cwt,
+                    floor_whole_animal = EXCLUDED.floor_whole_animal,
+                    cutout_value_cwt = EXCLUDED.cutout_value_cwt,
+                    cutout_whole_animal = EXCLUDED.cutout_whole_animal,
+                    typical_live_weight = EXCLUDED.typical_live_weight,
+                    typical_hanging_weight = EXCLUDED.typical_hanging_weight,
+                    processor_cost_est = EXCLUDED.processor_cost_est,
+                    data_source = EXCLUDED.data_source
+            """, (
+                report_date, species, grade,
+                live_cwt, dressed_cwt, floor,
+                cutout_cwt, cutout_total,
+                live_wt, hanging_wt, round(proc_cost, 2),
+                'USDA DataMart + MARS' + (' (lamb proxy)' if mdata.get('data_source_note') == 'lamb proxy' else ''),
+            ))
+            rows_written += 1
+
+    conn.commit()
+    print(f"\n  Wrote {rows_written} rows to weekly_market_prices")
+    return rows_written
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────
@@ -409,3 +554,13 @@ if __name__ == '__main__':
                         vals.append(v)
                 avg = sum(vals) / len(vals) if vals else 0
                 print(f"  Cutout ({grade}): {len(cuts)} cuts, avg ${avg:.2f}/cwt")
+
+    # Write to database if --save flag
+    if '--save' in sys.argv:
+        from optimizer_config import get_connection
+        use_supabase = '--supabase' in sys.argv
+        conn = get_connection(use_supabase=use_supabase)
+        save_to_database(conn, data)
+        conn.close()
+    else:
+        print("\n  (Use --save [--supabase] to write to database)")
