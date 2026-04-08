@@ -801,20 +801,71 @@ def solve_unified_mip(pos_list, inventory, processors, customers, distances, con
 
 # ─── Execution ───────────────────────────────────────────────────────────
 
-def create_slaughter_order(conn, animal, processor, batch_pos, cost_breakdown):
-    """Create a slaughter order and update POs + inventory."""
+def create_slaughter_order(conn, animal, processor, batch_pos, cost_breakdown, config=None):
+    """Create a slaughter order and update POs + inventory.
+
+    Populates farmer payment estimates, customer total estimate,
+    and all cost fields from the optimizer's cost breakdown.
+    """
     import random, string
     rand = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     order_number = f"SO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{animal['species'][:3].upper()}-{rand}"
+
+    # Compute farmer payment from market data + config
+    live_weight = float(animal.get('live_weight_est') or 0)
+    hanging_weight = cost_breakdown['hanging_weight']
+    farmer_rate = None
+    market_cwt = None
+    farmer_payment_est = None
+    customer_total_est = None
+
+    if config:
+        # Try to get market price from weekly_market_prices
+        try:
+            with conn.cursor() as cur2:
+                cur2.execute("""
+                    SELECT live_price_cwt, dressed_price_cwt FROM weekly_market_prices
+                    WHERE species = %s ORDER BY report_date DESC LIMIT 1
+                """, (animal['species'],))
+                row = cur2.fetchone()
+                if row:
+                    market_cwt = float(row[0]) if row[0] else (float(row[1]) if row[1] else None)
+        except Exception:
+            conn.rollback()
+
+        if market_cwt and hanging_weight > 0:
+            dress_pct = get_dress_pct(config, animal['species'])
+            farmer_premium = get_config(config, 'farmer_premium_pct', 0.14)
+            farmer_rate = round((market_cwt / 100 / dress_pct) * (1 + farmer_premium), 4)
+            farmer_payment_est = round(farmer_rate * hanging_weight, 2)
+
+        # Customer total estimate from price_custom per-lb × weight × share fractions
+        try:
+            with conn.cursor() as cur2:
+                cur2.execute("""
+                    SELECT price FROM price_custom
+                    WHERE species = %s AND share = 'per_lb'
+                    ORDER BY effective_date DESC LIMIT 1
+                """, (animal['species'],))
+                row = cur2.fetchone()
+                if row:
+                    per_lb = float(row[0])
+                    cutout_yield = get_config(config, 'cutout_yield', 0.65)
+                    take_home_wt = hanging_weight * cutout_yield
+                    customer_total_est = round(per_lb * take_home_wt, 2)
+        except Exception:
+            conn.rollback()
 
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO slaughter_orders (
                 order_number, animal_id, profile_id, species, status,
                 processing_cost, estimated_hanging_weight,
-                farmer_transport_cost, total_customer_transport_cost
+                farmer_transport_cost, total_customer_transport_cost,
+                live_weight_est, market_price_cwt, farmer_rate_per_lb,
+                farmer_payment_est, customer_total_est
             )
-            VALUES (%s, %s, %s, %s, 'planned', %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, 'planned', %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             order_number,
             animal['id'],
@@ -824,6 +875,11 @@ def create_slaughter_order(conn, animal, processor, batch_pos, cost_breakdown):
             cost_breakdown['hanging_weight'],
             cost_breakdown['farmer_transport'],
             cost_breakdown['customer_transport'],
+            live_weight,
+            market_cwt,
+            farmer_rate,
+            farmer_payment_est,
+            customer_total_est,
         ))
 
         cur.execute("""
@@ -970,7 +1026,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
                 print(f"      Customer transport: ${breakdown['customer_transport']:.2f}")
 
                 if not dry_run:
-                    so_number = create_slaughter_order(conn, animal, proc, batch, breakdown)
+                    so_number = create_slaughter_order(conn, animal, proc, batch, breakdown, config)
                     print(f"    → Slaughter order: {so_number}")
 
                 total_orders_created += 1
@@ -1006,7 +1062,7 @@ def run_optimizer(use_supabase=False, dry_run=False, mode='unified'):
                 print(f"      Customer transport: ${breakdown['customer_transport']:.2f}")
 
                 if not dry_run:
-                    so_number = create_slaughter_order(conn, animal, proc, batch, breakdown)
+                    so_number = create_slaughter_order(conn, animal, proc, batch, breakdown, config)
                     print(f"    → Slaughter order: {so_number}")
 
                 total_orders_created += 1
